@@ -7,6 +7,6 @@ echo "Running unit tests..."
 cd "$(dirname "$0")"
 
 # Run the tests
-python -m pytest test_brain_engine.py -v
+./venv/bin/python3 -m pytest test_brain_engine.py -v
 
 echo "Tests completed!"
