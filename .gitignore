@@ -1,0 +1,24 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment Variables (SENSITIVE)
+.env
+
+# Database Files (regenerated on index)
+chroma_db/
+neo4j_data/
+chroma_data/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
