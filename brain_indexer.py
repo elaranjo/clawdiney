@@ -29,14 +29,15 @@ neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
 class OllamaEmbedding(EmbeddingFunction):
     def __init__(self, model_name="bge-m3:latest"):
         self.model_name = model_name
-    
+        self.ollama_client = ollama.Client(timeout=600)
+
     def __call__(self, input: list[str]) -> list[list[float]]:
         embeddings = []
         for text in input:
-            response = ollama.embeddings(model=self.model_name, prompt=text)
+            response = self.ollama_client.embeddings(model=self.model_name, prompt=text)
             embeddings.append(response["embedding"])
         return embeddings
-    
+
     def name(self) -> str:
         return f"ollama_{self.model_name}"
 
@@ -48,6 +49,38 @@ collection = client.get_or_create_collection(
 )
 
 print("🚀 Starting Indexing of files from", VAULT_PATH)
+
+# Prepara lista para armazenar dados dos arquivos para Neo4j
+vault_files = []
+
+def fixed_size_chunking(text, chunk_size=500, overlap=50):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end]
+        chunks.append(chunk)
+        start = end - overlap
+    return [{"header": "Fixed Size", "content": chunk} for chunk in chunks]
+
+def semantic_chunking(text):
+    import re
+    # Split by sentence endings
+    sentences = re.split(r'(?<=[.!?]) +', text)
+    chunks = []
+    current_chunk = ""
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) > Config.CHUNK_SIZE:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = sentence
+            else:
+                current_chunk = sentence
+        else:
+            current_chunk += sentence + " "
+    if current_chunk:
+        chunks.append(current_chunk)
+    return [{"header": "Semantic", "content": chunk} for chunk in chunks]
 
 def markdown_chunking(text):
     """
@@ -76,6 +109,18 @@ def markdown_chunking(text):
 
     return chunks
 
+def chunk_text(text):
+    strategy = Config.CHUNKING_STRATEGY
+    if strategy == "headers":
+        return markdown_chunking(text)
+    elif strategy == "fixed":
+        return fixed_size_chunking(text, Config.CHUNK_SIZE, Config.CHUNK_OVERLAP)
+    elif strategy == "semantic":
+        return semantic_chunking(text)
+    else:
+        # default to headers
+        return markdown_chunking(text)
+
 # Processa todos os arquivos .md no Vault com chunking
 total_files = 0
 processed = 0
@@ -88,8 +133,17 @@ for file_path in Path(VAULT_PATH).rglob("*.md"):
             print(f"⚠️ Skipping empty file: {file_path.name}")
             continue
 
-        # Aplica chunking por headers Markdown
-        chunks = markdown_chunking(content)
+        # Extrai tags do arquivo (formato #tag)
+        import re
+        tags = re.findall(r'#(\w+)', content)
+        vault_files.append({
+            "name": file_path.name,
+            "content": content,
+            "tags": tags
+        })
+
+        # Aplica chunking com estratégia configurável
+        chunks = chunk_text(content)
 
         # Adiciona cada chunk como documento separado
         for i, chunk in enumerate(chunks):
@@ -110,18 +164,13 @@ for file_path in Path(VAULT_PATH).rglob("*.md"):
 
 # Atualiza o grafo no Neo4j usando MERGE/UPSERT
 with neo4j_driver.session() as session:
-    # Em vez de deletar tudo, usamos MERGE para atualizar ou criar nós
-    print("🔄 Updating Neo4j graph with MERGE operations...")
-
     # Primeiro, atualizamos ou criamos nós para cada arquivo com conteúdo
-    vault_files = [{"name": f.name, "content": f.read_text(encoding='utf-8')} for f in Path(VAULT_PATH).rglob("*.md") if f.read_text(encoding='utf-8').strip()]
-
-    # Usamos UNWIND com MERGE para atualizar ou criar nós
     session.run("""
     UNWIND $files AS file
     MERGE (n:Note {name: file.name})
     SET n.content = file.content,
-        n.last_indexed = timestamp()
+        n.last_indexed = timestamp(),
+        n.tags = file.tags
     """, files=vault_files)
 
     # Em seguida, atualizamos os relacionamentos usando MERGE
@@ -138,8 +187,15 @@ with neo4j_driver.session() as session:
     MERGE (a)-[:LINKS_TO]->(b)
     """)
 
-    # Opcionalmente, podemos remover nós órfãos que não estão mais no vault
-    # Isso pode ser feito em uma operação separada se necessário
+    # Criar relacionamentos baseados em tags compartilhadas
+    session.run("""
+    MATCH (a:Note), (b:Note)
+    WHERE a <> b
+    WITH a, b, [tag IN a.tags WHERE tag IN b.tags] AS sharedTags
+    UNWIND sharedTags AS tag
+    MERGE (a)-[:SHARES_TAG {tag: tag}]->(b)
+    """)
+
     print("✅ Neo4j graph updated successfully!")
 
 print(f"✅ Brain Indexing Complete! ({processed}/{total_files} files processed)")

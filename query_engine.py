@@ -12,6 +12,9 @@ class BrainQueryEngine:
             host=chroma_config["host"],
             port=chroma_config["port"]
         )
+        # Configura timeout para 60 segundos no cliente httpx subjacente
+        import httpx
+        self.chroma_client.timeout = httpx.Timeout(300.0)
         self.vector_collection = self.chroma_client.get_collection(name="obsidian_vault")
 
         # Neo4j Setup
@@ -29,11 +32,11 @@ class BrainQueryEngine:
 
     def get_related_notes(self, note_name):
         """
-        Fetches notes that are linked to the given note in Neo4j.
+        Fetches notes that are linked to the given note in Neo4j, including tag-based relationships.
         """
         with self.neo4j_driver.session() as session:
             query = """
-            MATCH (n:Note {name: $name})-[r:LINKS_TO]-(related:Note)
+            MATCH (n:Note {name: $name})-[r:LINKS_TO|SHARES_TAG]-(related:Note)
             RETURN related.name as name, related.path as path
             """
             result = session.run(query, name=note_name)
@@ -43,7 +46,7 @@ class BrainQueryEngine:
         """Rerank results using cross-encoder model"""
         scored_results = []
         for doc, meta in results:
-            combined = f"Query: {query}\nDocument: {doc}"
+            combined = f"Output only the relevance score between 0 and 1. Query: {query}\nDocument: {doc}"
             try:
                 response = ollama.generate(
                     model=Config.RERANK_MODEL_NAME,
