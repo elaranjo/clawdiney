@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is Clawdiney - a hybrid Vector + Graph system that transforms an Obsidian Vault into a living knowledge source for AI coding agents. The system enables semantic search and knowledge graph navigation of company SOPs, design systems, architectural patterns, and documentation.
+Clawdiney is a hybrid Vector + Graph system that transforms an Obsidian Vault into a living knowledge source for AI coding agents. The system enables semantic search and knowledge graph navigation of SOPs, design systems, architectural patterns, and documentation.
 
 ## Architecture
 
 The system consists of three main components:
 
-1. **ChromaDB (Vector Database)** - Handles semantic search using embeddings (now unified to HTTP client)
+1. **ChromaDB (Vector Database)** - Handles semantic search using embeddings (unified to HTTP client)
 2. **Neo4j (Graph Database)** - Manages relationships between notes via WikiLinks
 3. **MCP Server** - Provides integration with Claude Code via Model Context Protocol
 
@@ -90,7 +90,7 @@ docker compose logs chromadb
 
 ## Key Files and Components
 
-- `brain_mcp_server.py` - Main MCP server that integrates with Claude Code (now with context manager support)
+- `brain_mcp_server.py` - Main MCP server that integrates with Claude Code (with context manager support)
 - `query_engine.py` - Core querying logic with semantic + graph search (unified to HTTP client)
 - `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j (unified to HTTP client)
 - `config.py` - Centralized configuration management (simplified to HTTP only)
@@ -104,7 +104,7 @@ The system integrates with Claude Code via the Model Context Protocol (MCP). Whe
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
 2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
-3. `read_full_note(filename)` - Read the entire content of a specific note (now lists candidates for ambiguous matches)
+3. `read_full_note(filename)` - Read the entire content of a specific note (lists candidates for ambiguous matches)
 
 Configuration example in `~/.claude.json`:
 ```json
@@ -122,7 +122,9 @@ Configuration example in `~/.claude.json`:
 }
 ```
 
-## Usage Improvements
+## Recent Improvements
+
+For detailed information about recent improvements, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ### Context Manager Support
 BrainEngine now supports context manager protocol:

@@ -1,120 +1,73 @@
 # 🧠 Clawdiney
 
-**Cérebro Expandido para Agentes de Codificação**
+**Expanded Brain for Coding Agents**
 
-Um sistema híbrido de **Vetores + Grafo** que transforma seu Obsidian Vault em uma fonte de conhecimento viva para o Claude Code.
-
----
-
-## 🚀 Visão Geral
-
-O Clawdiney permite que agentes de IA (como o Claude Code) consultem sua base de conhecimento de forma inteligente:
-
-- **Busca Semântica:** Encontra padrões, SOPs e componentes por significado (não apenas palavras-chave).
-- **Grafo de Conhecimento:** Mapeia relações entre notas via `[[WikiLinks]]`.
-- **Integração Nativa:** Conecta-se ao Claude Code via MCP (Model Context Protocol).
+A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a living knowledge source for Claude Code.
 
 ---
 
-## 📋 Pré-requisitos
+## 🚀 Overview
 
-Antes de começar, certifique-se de ter instalado:
+Clawdiney enables AI agents (like Claude Code) to intelligently query your knowledge base:
 
-| Software | Versão Mínima | Link |
-|----------|---------------|------|
+- **Semantic Search:** Finds patterns, SOPs and components by meaning (not just keywords)
+- **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]`
+- **Native Integration:** Connects to Claude Code via MCP (Model Context Protocol)
+
+---
+
+## 📋 Prerequisites
+
+Before starting, make sure you have installed:
+
+| Software | Minimum Version | Link |
+|----------|-----------------|------|
 | **Docker** | 20.x+ | [docker.com](https://docs.docker.com/get-docker/) |
-| **Docker Compose** | 2.x+ | Incluído no Docker Desktop ou `apt install docker-compose-plugin` |
+| **Docker Compose** | 2.x+ | Included in Docker Desktop or `apt install docker-compose-plugin` |
 | **Ollama** | 0.1.x+ | [ollama.com](https://ollama.com/) |
-| **Python** | 3.10+ | Geralmente já instalado em sistemas Unix. Se não: `apt install python3` ou `brew install python@3.12` |
-| **Claude Code** | Latest | `ollama launch claude` |
+| **Python** | 3.10+ | Usually already installed on Unix systems. If not: `apt install python3` or `brew install python@3.12` |
 
-**Sistemas Suportados:**
+**Supported Systems:**
 - ✅ Linux (Ubuntu, Debian, Fedora, Arch, etc.)
-- ✅ macOS (Intel e Apple Silicon)
+- ✅ macOS (Intel and Apple Silicon)
 - ✅ WSL2 (Windows Subsystem for Linux)
-- ✅ BSD (FreeBSD, OpenBSD - com ajustes manuais)
+- ✅ BSD (FreeBSD, OpenBSD - with manual adjustments)
 
 ---
 
-## 🛠️ Instalação Rápida
+## 🛠️ Quick Installation
 
-Existem **três formas** de instalar o Clawdiney:
+### Create the Vault (If you don't have one)
 
----
-
-### Opção 0: Criar o Vault do Zero (Se não tiver um)
-
-Se você **ainda não tem um vault** da firma, use o script de criação:
+If you **don't have a vault yet**, use the creation script:
 
 ```bash
 chmod +x setup_vault.sh
 ./setup_vault.sh
 ```
 
-**O script vai:**
-- ✅ Criar estrutura de pastas (P.A.R.A. method)
-- ✅ Criar `00_Index.md` (documentação do vault)
-- ✅ Criar SOPs básicos (Backend, Design System, etc.)
-- ✅ Criar `Agent_Protocol.md` (instruções para IA)
-- ✅ Opcional: Inicializar repositório Git
-
-**Tempo estimado:** 1-2 minutos
+**The script will:**
+- ✅ Create folder structure (P.A.R.A. method)
+- ✅ Create `00_Index.md` (vault documentation)
+- ✅ Create basic SOPs (Backend, Design System, etc.)
+- ✅ Create `Agent_Protocol.md` (instructions for AI)
+- ✅ Optional: Initialize Git repository
 
 ---
 
-### Opção 1: Via Arquivo Compactado (Mais Rápido)
-
-**1. Baixe o arquivo** `clawdiney-kit-v1.tar.gz`
-
-**2. Extraia na pasta de projetos:**
+**Clone this repository:**
 ```bash
-tar -xzvf clawdiney-kit-v1.tar.gz -C ~/projetos/
-cd ~/projetos/clawdiney
+git clone git@github.com:elaranjo/clawdiney.git
+cd clawdiney
 ```
 
-> **Nota:** Se preferir outra pasta, ajuste conforme necessário. Apenas mantenha a estrutura organizada.
-
-**3. Configure o `.env`:**
-```bash
-cp .env.example .env
-nano .env  # Ou use seu editor preferido (vim, code, etc.)
-```
-
-**Edite a linha do `VAULT_PATH`** para apontar para o seu Obsidian Vault da firma:
-```bash
-VAULT_PATH=~/Documents/CompanyVault
-```
-
-**4. Execute o Bootstrapper:**
-```bash
-chmod +x setup_brain.sh
-./setup_brain.sh
-```
-
----
-
-### Opção 2: Via Git (Recomendado para Times)
-
-**1. Clone o repositório do Vault da Firma** (se ainda não tiver):
-```bash
-git clone git@github.com:[SUA_FIRMA]/company-vault.git ~/Documents/CompanyVault
-```
-
-> **Dica:** Em sistemas Linux, você pode usar `~/documentos/` ou qualquer pasta de sua preferência. Apenas seja consistente.
-
-**2. Clone este repositório:**
-```bash
-git clone git@github.com:[SUA_FIRMA]/clawdiney.git ~/projetos/clawdiney
-cd ~/projetos/clawdiney
-```
-
-**3. Configure o `.env`:**
+**Configure `.env`:**
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-**4. Execute o Bootstrapper:**
+**Run the Bootstrapper:**
 ```bash
 chmod +x setup_brain.sh
 ./setup_brain.sh
@@ -122,62 +75,38 @@ chmod +x setup_brain.sh
 
 ---
 
-## 📋 O Que o Bootstrapper Faz
+## 📋 What the Bootstrapper Does
 
-O script `setup_brain.sh` executa automaticamente:
+The `setup_brain.sh` script automatically executes:
 
-| Passo | Ação |
-|-------|------|
-| 🔍 | Verifica se Docker, Docker Compose e Ollama estão instalados |
-| 📝 | Cria o `.env` com configurações padrão (se não existir) |
-| 🐳 | Sobe containers Neo4j + ChromaDB via Docker Compose |
-| 🐍 | Cria ambiente virtual Python (`venv`) |
-| 📦 | Instala dependências Python (`neo4j`, `chromadb`, `ollama`, etc.) |
-| ✅ | **Verifica e auto-repara** dependências faltantes |
-| 🦙 | Baixa o modelo de embeddings (`bge-m3`) via Ollama |
-| 🧠 | Indexa seu Vault no banco de dados |
-
-**Tempo estimado:** 3-5 minutos (dependendo do tamanho do Vault e velocidade da internet)
+| Step | Action |
+|------|--------|
+| 🔍 | Checks if Docker, Docker Compose and Ollama are installed |
+| 📝 | Creates `.env` with default settings (if it doesn't exist) |
+| 🐳 | Starts Neo4j + ChromaDB containers via Docker Compose |
+| 🐍 | Creates Python virtual environment (`venv`) |
+| 📦 | Installs Python dependencies (`neo4j`, `chromadb`, `ollama`, etc.) |
+| ✅ | **Checks and auto-repairs** missing dependencies |
+| 🦙 | Downloads embedding model (`bge-m3`) via Ollama |
+| 🧠 | Indexes your Vault in the database |
 
 ---
 
-## ⚙️ Configuração Manual (Opcional)
+**⚠️ Important:** Point `VAULT_PATH` to the **dedicated vault**, not your personal vault.
 
-### 1. Editar o `.env`
+### 2. Configure Claude Code (MCP)
 
-Após rodar o bootstrapper (ou manualmente), edite o arquivo `.env`:
-
-```bash
-# Caminho para o seu Obsidian Vault da Firma
-VAULT_PATH=~/Documents/CompanyVault
-
-# Caminho para armazenar os dados do ChromaDB
-CHROMA_PATH=~/projetos/clawdiney/chroma_db
-
-# Modelo de Embedding (via Ollama)
-MODEL_NAME=bge-m3
-
-# Configurações do Neo4j
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password123
-```
-
-**⚠️ Importante:** Aponte `VAULT_PATH` para o vault da **firma**, não para seu vault pessoal.
-
-### 2. Configurar o Claude Code (MCP)
-
-Para que o Claude Code use o Brain nativamente, adicione a configuração ao seu `~/.claude.json`:
+To enable Claude Code to use the Brain natively, add the configuration to your `~/.claude.json`:
 
 ```json
 {
   "projects": {
-    "/home/SEU_USUARIO/projetos": {
+    "/home/YOUR_WORK_DIRECTORY": {
       "mcpServers": {
         "clawdiney": {
-          "command": "/home/SEU_USUARIO/projetos/clawdiney/venv/bin/python3",
+          "command": "/home/YOUR_WORK_DIRECTORY/clawdiney/venv/bin/python3",
           "args": [
-            "/home/SEU_USUARIO/projetos/clawdiney/brain_mcp_server.py"
+            "/home/YOUR_WORK_DIRECTORY/clawdiney/brain_mcp_server.py"
           ]
         }
       }
@@ -188,220 +117,193 @@ Para que o Claude Code use o Brain nativamente, adicione a configuração ao seu
 
 ---
 
-## 🚀 Uso
+## 🚀 Usage
 
-### Iniciar Todos os Serviços
+### Start All Services
 
-Para iniciar todos os serviços (Neo4j, ChromaDB e MCP Server) juntos:
+To start all services (Neo4j, ChromaDB and MCP Server) together:
 
 ```bash
 ./run_brain.sh
 ```
 
-Este script irá:
-- Iniciar os containers Docker para Neo4j e ChromaDB
-- Aguardar a inicialização dos serviços
-- Indexar o vault Obsidian
-- Iniciar o servidor MCP em background
+This script will:
+- Start Docker containers for Neo4j and ChromaDB
+- Wait for services to initialize
+- Index the Obsidian vault
+- Start the MCP server in background
 
-### Parar Todos os Serviços
+### Stop All Services
 
-Para parar todos os serviços, pressione Ctrl+C no terminal onde o script `run_brain.sh` está em execução, ou execute:
+To stop all services, press Ctrl+C in the terminal where `run_brain.sh` is running, or execute:
 
 ```bash
 docker compose down
 ```
 
-### Via Claude Code (Recomendado)
+### Via Claude Code (Recommended)
 
-Com o MCP configurado, o Claude Code usará o Brain automaticamente. Basta pedir:
+With MCP configured, Claude Code will use the Brain automatically. Just ask:
 
-> *"Verifique no Brain se existe algum SOP para deploy em produção."*
+> *"Check in the Brain if there are any SOPs for production deployment."*
 
-> *"Pesquise no cérebro os padrões de componentes de UI do Design System."*
+> *"Search the brain for UI Design System patterns."*
 
-> *"Use a ferramenta search_brain para encontrar a estrutura de pastas dos repositórios."*
+> *"Use the search_brain tool to find the folder structure of repositories."*
 
-### Via Shell (Alternativo)
+### Via Shell (Alternative)
 
-Se o MCP não estiver disponível, use o script direto:
+If MCP is not available, use the direct script:
 
 ```bash
-./ask_brain.sh "padrões de deploy em produção"
+./ask_brain.sh "production deployment patterns"
 ```
 
-### Via Python (Para desenvolvedores)
+### Via Python (For developers)
 
 ```bash
-./venv/bin/python3 query_engine.py "sua consulta aqui"
+./venv/bin/python3 query_engine.py "your query here"
 ```
 
 ---
 
-## 🧩 Arquitetura
+## 🧩 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Claude Code (Agente)                     │
+│                     Claude Code (Agent)                     │
 └─────────────────────┬───────────────────────────────────────┘
                       │ MCP Protocol / Shell
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Clawdiney (Servidor)                       │
+│                   Clawdiney (Server)                        │
 │  ┌──────────────────────┐     ┌──────────────────────────┐  │
-│  │   ChromaDB (Vetor)   │     │   Neo4j (Grafo)          │  │
-│  │  - Busca Semântica   │     │  - Relacionamentos       │  │
-│  │  - Embeddings bge-m3 │     │  - [[WikiLinks]]         │  │
+│  │   ChromaDB (Vector)  │     │   Neo4j (Graph)          │  │
+│  │  - Semantic Search   │     │  - Relationships         │  │
+│  │  - bge-m3 embeddings │     │  - [[WikiLinks]]         │  │
 │  └──────────────────────┘     └──────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Obsidian Vault (Fonte do Conhecimento)          │
-│  - SOPs, Design System, Arquitetura, Padrões                │
+│              Obsidian Vault (Knowledge Source)              │
+│  - SOPs, Design System, Architecture, Patterns             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🔄 Atualizando o Conhecimento
+## 🔄 Updating Knowledge
 
-Sempre que o Vault da firma for atualizado (novos SOPs, padrões, etc.):
+Whenever the Vault is updated (new SOPs, patterns, etc.):
 
 ```bash
-# Re-indexar o Vault
+# Re-index the Vault
 ./venv/bin/python3 brain_indexer.py
 ```
 
-O Claude Code terá acesso imediato às novas informações na próxima consulta.
+Claude Code will have immediate access to new information in the next query.
 
 ---
 
-## 🛡️ Privacidade e Segurança
+## 🛡️ Privacy and Security
 
-- **Vault Pessoal vs. Vault da Firma:** Este sistema foi desenhado para usar um vault **exclusivo da firma**. Não aponte para seu vault pessoal.
-- **Dados Locais:** Tudo roda localmente na sua máquina. Nada é enviado para nuvem (exceto se você usar modelos cloud via Ollama).
-- **Isolamento:** Os dados do banco (Neo4j/ChromaDB) ficam em volumes Docker locais.
+- **Personal Vault vs. Dedicated Vault:** This system was designed to use a **dedicated vault**. We don't recommend using your personal vault.
+- **Local Data:** Everything runs locally on your machine. Nothing is sent to the cloud (except if you use cloud models).
+- **Isolation:** Database data (Neo4j/ChromaDB) stays in local Docker volumes.
 
 ---
 
 ## 🐛 Troubleshooting
 
-### O Claude Code não vê o servidor MCP
-- Verifique se o `.claude.json` está configurado corretamente.
-- Reinicie a sessão do Claude Code.
-- Teste o servidor manualmente: `./venv/bin/python3 brain_mcp_server.py`
+### Claude Code doesn't see the MCP server
+- Check if `.claude.json` is configured correctly.
+- Restart the Claude Code session.
+- Test the server manually: `./venv/bin/python3 brain_mcp_server.py`
 
-### Erro de conexão com Neo4j
-- Verifique se o container está rodando: `docker ps | grep neo4j`
-- Se necessário, reinicie: `docker compose restart`
+### Neo4j connection error
+- Check if the container is running: `docker ps | grep neo4j`
+- If necessary, restart: `docker compose restart`
 
-### Erro de conexão com ChromaDB
-- Verifique os logs: `docker compose logs chromadb`
-- Recrie o banco (dados serão perdidos): `rm -rf chroma_db && docker compose up -d`
+### ChromaDB connection error
+- Check logs: `docker compose logs chromadb`
+- Recreate the database (data will be lost): `rm -rf chroma_db && docker compose up -d`
 
 ---
 
-## 📚 Comandos Úteis
+## 📚 Useful Commands
 
 ```bash
-# Ver status dos containers
+# Check container status
 docker compose ps
 
-# Ver logs do Neo4j
+# View Neo4j logs
 docker compose logs neo4j
 
-# Parar todos os serviços
+# Stop all services
 docker compose down
 
-# Iniciar todos os serviços (incluindo MCP Server)
+# Start all services (including MCP Server)
 ./run_brain.sh
 
-# Re-indexar o Vault
+# Re-index the Vault
 ./venv/bin/python3 brain_indexer.py
 
-# Testar busca
-./ask_brain.sh "sua consulta"
+# Test search
+./ask_brain.sh "your query"
 ```
 
 ---
 
-## ❓ FAQ (Perguntas Frequentes)
+## ❓ FAQ (Frequently Asked Questions)
 
-### "Preciso ter o Obsidian instalado?"
-**Não.** O Obsidian é apenas um editor. O Brain lê os arquivos `.md` diretamente, então você só precisa dos arquivos do Vault.
+### "Do I need Obsidian installed?"
+**No.** Obsidian is just an editor. The Brain reads `.md` files directly, so you only need the Vault files.
 
-### "Posso usar meu vault pessoal?"
-**Tecnicamente sim, mas não recomendamos.** O sistema foi desenhado para um vault **compartilhado da firma**. Se você apontar para seu vault pessoal, seus colegas não terão acesso aos mesmos padrões.
+### "Can I use my personal vault?"
+**Technically yes, but we don't recommend it.** If you point to your personal vault, it may cause confusion with the agent's data.
 
-### "Quanto tempo leva para indexar?"
-Depende do tamanho do Vault:
-- **Vault pequeno** (< 100 notas): ~30 segundos
-- **Vault médio** (100-500 notas): 1-2 minutos
-- **Vault grande** (> 500 notas): 3-5 minutos
+### "How long does indexing take?"
+It depends on the Vault size:
+- **Small vault** (< 100 notes): ~30 seconds
+- **Medium vault** (100-500 notes): 1-2 minutes
+- **Large vault** (> 500 notes): 3-5 minutes
 
-### "Preciso re-indexar toda vez que atualizar um SOP?"
-**Sim.** Sempre que o Vault mudar, rode:
+### "Do I need to re-index every time I update an SOP?"
+**Yes. For now** Whenever the Vault changes, run:
 ```bash
 ./venv/bin/python3 brain_indexer.py
 ```
 
-### "Funciona no Windows?"
-**Sim!** Através do **WSL2** (Windows Subsystem for Linux). Siga estes passos:
-1. Instale o WSL2: `wsl --install` (no PowerShell como Admin)
-2. Instale o Docker Desktop para Windows e ative a integração com WSL2
-3. Dentro do WSL2, siga as instruções normais de instalação como se fosse Linux
+### "Does it work on Windows?"
+**Yes!** Through **WSL2** (Windows Subsystem for Linux). Follow these steps:
+1. Install WSL2: `wsl --install` (in PowerShell as Admin)
+2. Install Docker Desktop for Windows and enable WSL2 integration
+3. Inside WSL2, follow the normal installation instructions as if it were Linux
 
-### "Qual distribuição Linux é recomendada?"
-O sistema foi testado principalmente em **Ubuntu 22.04+** e **Debian 11+**, mas deve funcionar em qualquer distribuição moderna com Docker e Python 3.10+.
+### "Which Linux distribution is recommended?"
+The system has been tested mainly on **Ubuntu 22.04+** and **Debian 11+**, but it should work on any modern distribution with Docker and Python 3.10+.
 
-### "E se eu usar outro modelo que não o Qwen no Ollama?"
-**Funciona normalmente.** O Brain é agnóstico ao modelo que você usa no Claude Code. O `bge-m3` é apenas para gerar embeddings (vetores), não para responder perguntas.
-
----
-
-## 🔄 Melhorias Recentes (v1.2.0)
-
-### Unificação do ChromaDB
-O sistema agora utiliza exclusivamente o cliente HTTP para ChromaDB, simplificando a configuração e eliminando a complexidade de escolha entre clientes persistentes e HTTP.
-
-### Gerenciamento Automático de Recursos
-O BrainEngine agora suporta protocolo de context manager:
-```python
-# Uso automático com fechamento de conexões
-with BrainEngine() as engine:
-    result = engine.search("minha consulta")
-# Conexões são fechadas automaticamente
-```
-
-### Resolução Inteligente de Arquivos
-Quando múltiplos arquivos têm o mesmo nome, o sistema lista todos os candidatos:
-```
-Multiple files found for 'design.md' (3 matches):
-- frontend/design.md
-- backend/design.md
-- mobile/design.md
-
-Please specify which file you want to read.
-```
-
-## 🤝 Contribuindo
-
-Para adicionar novas ferramentas ao MCP:
-1. Edite `brain_mcp_server.py`
-2. Adicione uma nova função decorada com `@mcp.tool()`
-3. Teste localmente antes de fazer commit.
+### "What if I use another model instead of Qwen in Ollama?"
+**It works normally.** The Brain is model-agnostic. You use whatever model you prefer in Claude Code. The `bge-m3` is just for generating embeddings (vectors), not for answering questions.
 
 ---
 
-## 📄 Licença
+## 🤝 Contributing
 
-Uso interno da firma. Distribuição controlada.
+To add new tools to MCP:
+1. Edit `brain_mcp_server.py`
+2. Add a new function decorated with `@mcp.tool()`
+3. Test locally before committing.
 
 ---
 
-**Criado com ❤️ pelo time de Engenharia**
+## 📄 License
 
-**Versão do Kit:** v1 (2026-04-17)
+MIT License
 
-**Compatibilidade:** Linux • macOS • WSL2 • Unix-like
+---
+
+**Created with ❤️ by the Voices in My Head team**
+
+**Compatibility:** Linux • macOS • WSL2 • Unix-like
