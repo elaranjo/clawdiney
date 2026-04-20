@@ -15,6 +15,8 @@ class Config:
 
     # Model
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
+    RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+    RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", "0.5")
 
     # Neo4j
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
