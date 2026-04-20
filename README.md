@@ -4,6 +4,10 @@
 
 A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a living knowledge source for Claude Code.
 
+<p align="center">
+  <img src="assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
+</p>
+
 ---
 
 ## 🚀 Overview
