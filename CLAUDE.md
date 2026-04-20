@@ -10,7 +10,7 @@ This is Clawdiney - a hybrid Vector + Graph system that transforms an Obsidian V
 
 The system consists of three main components:
 
-1. **ChromaDB (Vector Database)** - Handles semantic search using embeddings
+1. **ChromaDB (Vector Database)** - Handles semantic search using embeddings (now unified to HTTP client)
 2. **Neo4j (Graph Database)** - Manages relationships between notes via WikiLinks
 3. **MCP Server** - Provides integration with Claude Code via Model Context Protocol
 
@@ -90,13 +90,13 @@ docker compose logs chromadb
 
 ## Key Files and Components
 
-- `brain_mcp_server.py` - Main MCP server that integrates with Claude Code
-- `query_engine.py` - Core querying logic with semantic + graph search
-- `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j
-- `config.py` - Centralized configuration management
+- `brain_mcp_server.py` - Main MCP server that integrates with Claude Code (now with context manager support)
+- `query_engine.py` - Core querying logic with semantic + graph search (unified to HTTP client)
+- `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j (unified to HTTP client)
+- `config.py` - Centralized configuration management (simplified to HTTP only)
 - `setup_brain.sh` - Automated setup script for new installations
 - `docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
-- `.env` - Configuration file for paths and connection settings
+- `.env` - Configuration file for paths and connection settings (simplified)
 
 ## Integration with Claude Code
 
@@ -104,7 +104,7 @@ The system integrates with Claude Code via the Model Context Protocol (MCP). Whe
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
 2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
-3. `read_full_note(filename)` - Read the entire content of a specific note
+3. `read_full_note(filename)` - Read the entire content of a specific note (now lists candidates for ambiguous matches)
 
 Configuration example in `~/.claude.json`:
 ```json
@@ -120,4 +120,25 @@ Configuration example in `~/.claude.json`:
     }
   }
 }
+```
+
+## Usage Improvements
+
+### Context Manager Support
+BrainEngine now supports context manager protocol:
+```python
+with BrainEngine() as engine:
+    result = engine.search("my query")
+# Connections are automatically closed
+```
+
+### Intelligent File Resolution
+When multiple files match a name, read_note now lists all candidates:
+```
+Multiple files found for 'design.md' (3 matches):
+- frontend/design.md
+- backend/design.md
+- mobile/design.md
+
+Please specify which file you want to read.
 ```

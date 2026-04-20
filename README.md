@@ -360,6 +360,31 @@ O sistema foi testado principalmente em **Ubuntu 22.04+** e **Debian 11+**, mas 
 
 ---
 
+## 🔄 Melhorias Recentes (v1.2.0)
+
+### Unificação do ChromaDB
+O sistema agora utiliza exclusivamente o cliente HTTP para ChromaDB, simplificando a configuração e eliminando a complexidade de escolha entre clientes persistentes e HTTP.
+
+### Gerenciamento Automático de Recursos
+O BrainEngine agora suporta protocolo de context manager:
+```python
+# Uso automático com fechamento de conexões
+with BrainEngine() as engine:
+    result = engine.search("minha consulta")
+# Conexões são fechadas automaticamente
+```
+
+### Resolução Inteligente de Arquivos
+Quando múltiplos arquivos têm o mesmo nome, o sistema lista todos os candidatos:
+```
+Multiple files found for 'design.md' (3 matches):
+- frontend/design.md
+- backend/design.md
+- mobile/design.md
+
+Please specify which file you want to read.
+```
+
 ## 🤝 Contribuindo
 
 Para adicionar novas ferramentas ao MCP:

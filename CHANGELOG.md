@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0] - 2026-04-20
+
+### Added
+- Context manager support for BrainEngine (`__enter__` and `__exit__`)
+- Intelligent file resolution in `read_note` that lists all candidates for ambiguous matches
+- Unified ChromaDB configuration to always use HTTP client
+
+### Changed
+- Simplified configuration system to remove dynamic client selection
+- Updated all modules to consistently use HTTP client only
+- Improved documentation and examples
+- Enhanced error messages for file resolution
+
+### Removed
+- Support for PersistentClient and local path configuration
+- `CHROMA_CLIENT_TYPE` environment variable
+- `CHROMA_PATH` environment variable
+
 ## [1.1.0] - 2026-04-19
 
 ### Added

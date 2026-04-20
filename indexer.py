@@ -8,14 +8,12 @@ from config import Config
 
 class ObsidianIndexer:
     def __init__(self):
+        # Always use HTTP client for ChromaDB
         chroma_config = Config.get_chroma_client_config()
-        if chroma_config["type"] == "http":
-            self.client = chromadb.HttpClient(
-                host=chroma_config["host"],
-                port=chroma_config["port"]
-            )
-        else:
-            self.client = chromadb.PersistentClient(path=chroma_config["path"])
+        self.client = chromadb.HttpClient(
+            host=chroma_config["host"],
+            port=chroma_config["port"]
+        )
 
         # We use a custom embedding function that calls Ollama
         self.collection = self.client.get_or_create_collection(

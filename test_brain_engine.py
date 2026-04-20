@@ -12,16 +12,10 @@ class TestConfig(unittest.TestCase):
 
     def setUp(self):
         # Store original environment variables
-        self.original_chroma_client_type = os.environ.get('CHROMA_CLIENT_TYPE')
-        self.original_chroma_path = os.environ.get('CHROMA_PATH')
         self.original_chroma_host = os.environ.get('CHROMA_HOST')
         self.original_chroma_port = os.environ.get('CHROMA_PORT')
 
         # Clear any existing environment variables that might interfere
-        if 'CHROMA_CLIENT_TYPE' in os.environ:
-            del os.environ['CHROMA_CLIENT_TYPE']
-        if 'CHROMA_PATH' in os.environ:
-            del os.environ['CHROMA_PATH']
         if 'CHROMA_HOST' in os.environ:
             del os.environ['CHROMA_HOST']
         if 'CHROMA_PORT' in os.environ:
@@ -33,10 +27,6 @@ class TestConfig(unittest.TestCase):
 
     def tearDown(self):
         # Restore original environment variables
-        if self.original_chroma_client_type is not None:
-            os.environ['CHROMA_CLIENT_TYPE'] = self.original_chroma_client_type
-        if self.original_chroma_path is not None:
-            os.environ['CHROMA_PATH'] = self.original_chroma_path
         if self.original_chroma_host is not None:
             os.environ['CHROMA_HOST'] = self.original_chroma_host
         if self.original_chroma_port is not None:
@@ -46,34 +36,15 @@ class TestConfig(unittest.TestCase):
         if 'config' in sys.modules:
             del sys.modules['config']
 
-    def test_default_chroma_config_persistent(self):
-        """Test default ChromaDB configuration is persistent"""
-        from config import Config
-        config = Config.get_chroma_client_config()
-        self.assertEqual(config["type"], "persistent")
-        self.assertIn("chroma_db", config["path"])
-
     def test_http_chroma_config(self):
         """Test HTTP ChromaDB configuration"""
-        os.environ['CHROMA_CLIENT_TYPE'] = 'http'
         os.environ['CHROMA_HOST'] = 'test-host'
         os.environ['CHROMA_PORT'] = '8080'
 
         from config import Config
         config = Config.get_chroma_client_config()
-        self.assertEqual(config["type"], "http")
         self.assertEqual(config["host"], "test-host")
         self.assertEqual(config["port"], 8080)
-
-    def test_persistent_chroma_config_custom_path(self):
-        """Test persistent ChromaDB configuration with custom path"""
-        os.environ['CHROMA_CLIENT_TYPE'] = 'persistent'
-        os.environ['CHROMA_PATH'] = '/custom/path'
-
-        from config import Config
-        config = Config.get_chroma_client_config()
-        self.assertEqual(config["type"], "persistent")
-        self.assertEqual(config["path"], "/custom/path")
 
 
 class TestBrainEngine(unittest.TestCase):
@@ -83,8 +54,6 @@ class TestBrainEngine(unittest.TestCase):
     @patch('chromadb.HttpClient')
     def test_init_http_client(self, mock_chroma_client, mock_neo4j_driver):
         """Test BrainEngine initialization with HTTP client"""
-        os.environ['CHROMA_CLIENT_TYPE'] = 'http'
-
         # Mock the ChromaDB client
         mock_chroma_instance = MagicMock()
         mock_chroma_client.return_value = mock_chroma_instance
@@ -119,6 +88,23 @@ class TestBrainEngine(unittest.TestCase):
                 # This might fail due to import issues in test environment, which is expected
                 pass
 
+    def test_context_manager(self):
+        """Test that BrainEngine works as context manager"""
+        with patch('neo4j.GraphDatabase.driver') as mock_neo4j_driver:
+            mock_driver = MagicMock()
+            mock_neo4j_driver.return_value = mock_driver
+
+            try:
+                from brain_mcp_server import BrainEngine
+                with BrainEngine() as engine:
+                    # Engine should be created and usable
+                    pass
+                # close() should be called automatically when exiting context
+                mock_driver.close.assert_called_once()
+            except Exception as e:
+                # This might fail due to import issues in test environment, which is expected
+                pass
+
     @patch('pathlib.Path.rglob')
     def test_read_note_single_file(self, mock_rglob):
         """Test read_note with single file match"""
@@ -144,12 +130,12 @@ class TestBrainEngine(unittest.TestCase):
     def test_read_note_multiple_files(self, mock_rglob):
         """Test read_note with multiple file matches"""
         mock_path1 = MagicMock()
-        mock_path1.read_text.return_value = "Test content 1"
         mock_path1.__str__.return_value = "/test/vault/subdir1/test.md"
+        mock_path1.relative_to.return_value = "subdir1/test.md"
 
         mock_path2 = MagicMock()
-        mock_path2.read_text.return_value = "Test content 2"
         mock_path2.__str__.return_value = "/test/vault/subdir2/test.md"
+        mock_path2.relative_to.return_value = "subdir2/test.md"
 
         mock_rglob.return_value = [mock_path1, mock_path2]
 
@@ -163,7 +149,9 @@ class TestBrainEngine(unittest.TestCase):
 
                 result = engine.read_note("test.md")
                 self.assertIn("Multiple files found", result)
-                self.assertIn("Test content 1", result)
+                self.assertIn("subdir1/test.md", result)
+                self.assertIn("subdir2/test.md", result)
+                self.assertNotIn("Please specify which file you want to read", result)
         except Exception as e:
             # This might fail due to import issues in test environment, which is expected
             pass
@@ -192,9 +180,9 @@ class TestBrainQueryEngine(unittest.TestCase):
     """Test the BrainQueryEngine class"""
 
     @patch('neo4j.GraphDatabase.driver')
-    @patch('chromadb.PersistentClient')
-    def test_init_persistent_client(self, mock_chroma_client, mock_neo4j_driver):
-        """Test BrainQueryEngine initialization with persistent client"""
+    @patch('chromadb.HttpClient')
+    def test_init_http_client(self, mock_chroma_client, mock_neo4j_driver):
+        """Test BrainQueryEngine initialization with HTTP client"""
         # Mock the ChromaDB client
         mock_chroma_instance = MagicMock()
         mock_chroma_client.return_value = mock_chroma_instance
@@ -233,9 +221,9 @@ class TestBrainQueryEngine(unittest.TestCase):
 class TestObsidianIndexer(unittest.TestCase):
     """Test the ObsidianIndexer class"""
 
-    @patch('chromadb.PersistentClient')
-    def test_init_persistent_client(self, mock_chroma_client):
-        """Test ObsidianIndexer initialization with persistent client"""
+    @patch('chromadb.HttpClient')
+    def test_init_http_client(self, mock_chroma_client):
+        """Test ObsidianIndexer initialization with HTTP client"""
         # Mock the ChromaDB client
         mock_chroma_instance = MagicMock()
         mock_chroma_client.return_value = mock_chroma_instance

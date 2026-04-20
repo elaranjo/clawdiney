@@ -6,16 +6,12 @@ from config import Config
 
 class BrainQueryEngine:
     def __init__(self):
-        # ChromaDB Setup
+        # ChromaDB Setup - Always use HTTP client
         chroma_config = Config.get_chroma_client_config()
-        if chroma_config["type"] == "http":
-            self.chroma_client = chromadb.HttpClient(
-                host=chroma_config["host"],
-                port=chroma_config["port"]
-            )
-        else:
-            self.chroma_client = chromadb.PersistentClient(path=chroma_config["path"])
-
+        self.chroma_client = chromadb.HttpClient(
+            host=chroma_config["host"],
+            port=chroma_config["port"]
+        )
         self.vector_collection = self.chroma_client.get_collection(name="obsidian_vault")
 
         # Neo4j Setup

@@ -14,14 +14,10 @@ class BrainEngine:
         # Initialize clients with error handling
         try:
             chroma_config = Config.get_chroma_client_config()
-            if chroma_config["type"] == "http":
-                self.chroma_client = chromadb.HttpClient(
-                    host=chroma_config["host"],
-                    port=chroma_config["port"]
-                )
-            else:
-                self.chroma_client = chromadb.PersistentClient(path=chroma_config["path"])
-
+            self.chroma_client = chromadb.HttpClient(
+                host=chroma_config["host"],
+                port=chroma_config["port"]
+            )
             self.vector_collection = self.chroma_client.get_collection(name="obsidian_vault")
         except Exception as e:
             raise Exception(f"Failed to initialize ChromaDB client: {str(e)}")
@@ -33,6 +29,14 @@ class BrainEngine:
             )
         except Exception as e:
             raise Exception(f"Failed to initialize Neo4j driver: {str(e)}")
+
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - automatically close connections"""
+        self.close()
 
     def close(self):
         """Close all connections"""
@@ -69,7 +73,7 @@ class BrainEngine:
             return f"Error during search: {str(e)}"
 
     def read_note(self, filename):
-        """Read a note from the vault with improved path resolution"""
+        """Read a note from the vault with intelligent path resolution"""
         try:
             vault_path = Path(Config.VAULT_PATH)
             # Find all matching files
@@ -78,10 +82,9 @@ class BrainEngine:
             if not matching_files:
                 return f"Error: Note {filename} not found in Vault."
             elif len(matching_files) > 1:
-                # If multiple files found, return paths and content of first one
-                paths_list = "\n".join([str(f) for f in matching_files])
-                content = matching_files[0].read_text(encoding='utf-8')
-                return f"Warning: Multiple files found for {filename}. Using first match.\nMatching paths:\n{paths_list}\n\nContent:\n{content}"
+                # If multiple files found, return all candidates
+                paths_list = "\n".join([f"- {str(f.relative_to(vault_path))}" for f in matching_files])
+                return f"Multiple files found for '{filename}' ({len(matching_files)} matches):\n{paths_list}\n\nPlease specify which file you want to read."
             else:
                 # Single file found
                 return matching_files[0].read_text(encoding='utf-8')
