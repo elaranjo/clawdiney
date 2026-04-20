@@ -1,25 +1,29 @@
-version: '3.8'
-
 services:
   # Neo4j: Graph Database for Knowledge Relationships
   neo4j:
-    image: neo4j:latest
+    image: ${NEO4J_IMAGE:-neo4j:latest}
     container_name: clawdiney-neo4j
     ports:
       - "7474:7474"  # Neo4j Browser (Web UI)
       - "7687:7687"  # Bolt Protocol (Database Connection)
     environment:
-      - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/password123}
+      - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}}
       - NEO4J_PLUGINS=["apoc"]
     volumes:
       - ./neo4j_data:/data
     networks:
       - brain-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}\" \"RETURN 1;\" >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # ChromaDB: Vector Database for Semantic Search
   chromadb:
-    image: chromadb/chroma:latest
+    image: ${CHROMA_IMAGE:-chromadb/chroma:latest}
     container_name: clawdiney-chromadb
     ports:
       - "8000:8000"
@@ -33,6 +37,7 @@ services:
   brain-mcp-server:
     build: .
     container_name: clawdiney-mcp-server
+    command: ["/app/init_mcp.sh"]
     ports:
       - "8006:8006"
     environment:
@@ -40,18 +45,23 @@ services:
       - CHROMA_PORT=8000
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=${NEO4J_USER:-neo4j}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password123}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
       - VAULT_PATH=/vault
-      - MODEL_NAME=bge-m3:latest
-      - OLLAMA_HOST=host.docker.internal
+      - MODEL_NAME=${MODEL_NAME:-bge-m3:latest}
+      - RERANK_MODEL_NAME=${RERANK_MODEL_NAME:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - ENABLE_RERANK=${ENABLE_RERANK:-true}
+      - OLLAMA_HOST=${OLLAMA_HOST:-host.docker.internal}
+      - MCP_TRANSPORT=streamable-http
     volumes:
-      - ~/Documents/ObsidianVault:/vault
+      - ${VAULT_MOUNT_PATH:-${HOME}/Documents/ObsidianVault}:/vault:ro
     networks:
       - brain-network
     restart: unless-stopped
     depends_on:
-      - chromadb
-      - neo4j
+      chromadb:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
 
 networks:
   brain-network:

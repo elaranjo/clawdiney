@@ -2,7 +2,7 @@
 
 **Expanded Brain for Coding Agents**
 
-A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a living knowledge source for Claude Code.
+A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a living knowledge source for coding agents.
 
 <p align="center">
   <img src="assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
@@ -12,11 +12,12 @@ A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a li
 
 ## 🚀 Overview
 
-Clawdiney enables AI agents (like Claude Code) to intelligently query your knowledge base:
+Clawdiney enables AI agents to query your knowledge base with a retrieval-first workflow:
 
 - **Semantic Search:** Finds patterns, SOPs and components by meaning (not just keywords)
 - **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]`
-- **Native Integration:** Connects to Claude Code via MCP (Model Context Protocol)
+- **Canonical Note Resolution:** Resolves ambiguous note names to vault-relative paths
+- **Native Integration:** Connects to MCP-compatible agents via Model Context Protocol
 
 ---
 
@@ -98,9 +99,9 @@ The `setup_brain.sh` script automatically executes:
 
 **⚠️ Important:** Point `VAULT_PATH` to the **dedicated vault**, not your personal vault.
 
-### 2. Configure Claude Code (MCP)
+### 2. Configure Your MCP Client
 
-To enable Claude Code to use the Brain natively, add the configuration to your `~/.claude.json`:
+To enable a local MCP client to use the Brain natively, add the configuration to your client config:
 
 ```json
 {
@@ -145,15 +146,22 @@ To stop all services, press Ctrl+C in the terminal where `run_brain.sh` is runni
 docker compose down
 ```
 
-### Via Claude Code (Recommended)
+### Via MCP Client (Recommended)
 
-With MCP configured, Claude Code will use the Brain automatically. Just ask:
+With MCP configured, the agent should use `search_brain` as the primary discovery tool:
 
 > *"Check in the Brain if there are any SOPs for production deployment."*
 
 > *"Search the brain for UI Design System patterns."*
 
 > *"Use the search_brain tool to find the folder structure of repositories."*
+
+When a result is ambiguous, resolve it with:
+
+- `resolve_note(name)` to list canonical paths
+- `get_note_chunks(path)` to inspect indexed sections
+
+Full-file reading is intentionally outside the MCP workflow. The agent should use the repository or vault filesystem directly after `search_brain` has identified the relevant note.
 
 ### Via Shell (Alternative)
 
@@ -206,7 +214,7 @@ Whenever the Vault is updated (new SOPs, patterns, etc.):
 ./venv/bin/python3 brain_indexer.py
 ```
 
-Claude Code will have immediate access to new information in the next query.
+The agent will have immediate access to new information in the next query after re-indexing.
 
 ---
 
@@ -220,9 +228,9 @@ Claude Code will have immediate access to new information in the next query.
 
 ## 🐛 Troubleshooting
 
-### Claude Code doesn't see the MCP server
-- Check if `.claude.json` is configured correctly.
-- Restart the Claude Code session.
+### MCP client doesn't see the server
+- Check if the client configuration points to `brain_mcp_server.py`.
+- Restart the client session.
 - Test the server manually: `./venv/bin/python3 brain_mcp_server.py`
 
 ### Neo4j connection error

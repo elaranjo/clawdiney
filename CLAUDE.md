@@ -12,10 +12,10 @@ The system consists of three main components:
 
 1. **ChromaDB (Vector Database)** - Handles semantic search using embeddings (unified to HTTP client)
 2. **Neo4j (Graph Database)** - Manages relationships between notes via WikiLinks
-3. **MCP Server** - Provides integration with Claude Code via Model Context Protocol
+3. **MCP Server** - Provides retrieval-first integration via Model Context Protocol
 
 Data flow:
-Obsidian Vault → brain_indexer.py → ChromaDB + Neo4j → brain_mcp_server.py → Claude Code
+Obsidian Vault → `brain_indexer.py` → ChromaDB + Neo4j → `brain_mcp_server.py` → MCP client
 
 ## Common Development Commands
 
@@ -90,21 +90,28 @@ docker compose logs chromadb
 
 ## Key Files and Components
 
-- `brain_mcp_server.py` - Main MCP server that integrates with Claude Code (with context manager support)
-- `query_engine.py` - Core querying logic with semantic + graph search (unified to HTTP client)
-- `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j (unified to HTTP client)
+- `brain_mcp_server.py` - MCP server exposing retrieval and note-resolution tools
+- `query_engine.py` - Core querying logic with semantic + graph search plus canonical note resolution
+- `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j with explicit `main()`
 - `config.py` - Centralized configuration management (simplified to HTTP only)
 - `setup_brain.sh` - Automated setup script for new installations
 - `docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
 - `.env` - Configuration file for paths and connection settings (simplified)
 
-## Integration with Claude Code
+## Integration
 
-The system integrates with Claude Code via the Model Context Protocol (MCP). When properly configured in `.claude.json`, Claude Code can use these tools:
+The system integrates with MCP clients. When properly configured, the agent should use these tools:
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
 2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
-3. `read_full_note(filename)` - Read the entire content of a specific note (lists candidates for ambiguous matches)
+3. `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
+4. `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
+
+The intended workflow is:
+- use `search_brain` first
+- use `resolve_note` when a note name is ambiguous
+- use `get_note_chunks` for structured drill-down
+- read the full file directly from the vault or repository when needed
 
 Configuration example in `~/.claude.json`:
 ```json
@@ -126,21 +133,11 @@ Configuration example in `~/.claude.json`:
 
 For detailed information about recent improvements, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
-### Context Manager Support
-BrainEngine now supports context manager protocol:
-```python
-with BrainEngine() as engine:
-    result = engine.search("my query")
-# Connections are automatically closed
-```
-
-### Intelligent File Resolution
-When multiple files match a name, read_note now lists all candidates:
+### Canonical File Resolution
+When multiple files match a name, `resolve_note` lists all candidates:
 ```
 Multiple files found for 'design.md' (3 matches):
 - frontend/design.md
 - backend/design.md
 - mobile/design.md
-
-Please specify which file you want to read.
 ```

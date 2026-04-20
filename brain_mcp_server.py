@@ -1,10 +1,7 @@
-import ollama
-import chromadb
-from neo4j import GraphDatabase
-from mcp.server.fastmcp import FastMCP
-from pathlib import Path
-from config import Config
+import os
+
 from query_engine import BrainQueryEngine
+from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP Server
 mcp = FastMCP("Clawdiney", port=8006, host="0.0.0.0")
@@ -19,8 +16,28 @@ def get_engine():
         try:
             engine = BrainQueryEngine()
         except Exception as e:
-            raise Exception(f"Failed to initialize BrainEngine: {str(e)}")
+            raise Exception(f"Failed to initialize BrainQueryEngine: {str(e)}")
     return engine
+
+
+def _format_candidates(query, candidates):
+    if not candidates:
+        return f"No notes found for '{query}'."
+
+    lines = [f"Candidates for '{query}':"]
+    for candidate in candidates:
+        lines.append(f"- {candidate['path']}")
+    return "\n".join(lines)
+
+
+def _format_chunks(chunks):
+    if not chunks:
+        return "No chunks found."
+
+    lines = [f"Chunks for {chunks[0]['path']}:"]
+    for chunk in chunks:
+        lines.append(f"- [{chunk['chunk_index']}] {chunk['header']}")
+    return "\n".join(lines)
 
 # --- MCP Tools ---
 
@@ -52,20 +69,35 @@ def explore_graph(note_name: str) -> str:
         return f"Error in explore_graph: {str(e)}"
 
 @mcp.tool()
-def read_full_note(filename: str) -> str:
+def resolve_note(name: str) -> str:
     """
-    Read the entire content of a specific note from the Vault.
-    Use this when you have found a relevant note and need the full detailed specification.
+    Resolve a note name to canonical vault-relative paths.
+    Use this when search_brain surfaces a relevant note but the name is ambiguous.
     """
     try:
         engine = get_engine()
-        return engine.read_note(filename)
+        return _format_candidates(name, engine.resolve_note(name))
     except Exception as e:
-        return f"Error in read_full_note: {str(e)}"
+        return f"Error in resolve_note: {str(e)}"
+
+
+@mcp.tool()
+def get_note_chunks(filename: str) -> str:
+    """
+    List chunk headers for a note.
+    Use this after resolve_note when you want a structured preview without reading the full file.
+    """
+    try:
+        engine = get_engine()
+        return _format_chunks(engine.get_note_chunks(filename))
+    except Exception as e:
+        return f"Error in get_note_chunks: {str(e)}"
 
 if __name__ == "__main__":
     try:
-        mcp.run()
+        transport = os.environ.get("MCP_TRANSPORT", "stdio")
+        mount_path = os.environ.get("MCP_MOUNT_PATH")
+        mcp.run(transport=transport, mount_path=mount_path)
     finally:
         # Clean up resources
         if engine is not None:

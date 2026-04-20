@@ -2,28 +2,17 @@
 
 ## Version 1.2.0 (2026-04-20)
 
-### Unified ChromaDB Configuration
-The system now exclusively uses the HTTP client for ChromaDB, simplifying configuration and eliminating the complexity of choosing between persistent and HTTP clients.
+### Retrieval-First Contract
+`BrainQueryEngine` is now the single active engine abstraction. MCP is centered on `search_brain`, with `resolve_note` and `get_note_chunks` for note discovery and drill-down.
 
-### Automatic Resource Management
-BrainEngine now supports context manager protocol:
-```python
-# Automatic usage with connection closing
-with BrainEngine() as engine:
-    result = engine.search("my query")
-# Connections are automatically closed
-```
+### Canonical Note Paths
+Notes now move toward canonical vault-relative `path` identifiers in vector metadata and graph nodes, reducing filename collisions.
 
-### Intelligent File Resolution
-When multiple files have the same name, the system lists all candidates:
-```
-Multiple files found for 'design.md' (3 matches):
-- frontend/design.md
-- backend/design.md
-- mobile/design.md
+### Indexer Refactor
+`brain_indexer.py` now exposes explicit functions and `main()`. Importing the module no longer triggers indexing side effects.
 
-Please specify which file you want to read.
-```
+### Reranker Fallback
+If the reranker model is unavailable or produces no passing scores, the system now falls back to the original vector ranking instead of returning an empty result set.
 
 ## Version 1.1.0 (2026-04-19)
 

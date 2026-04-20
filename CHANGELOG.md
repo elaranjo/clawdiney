@@ -3,20 +3,19 @@
 ## [1.2.0] - 2026-04-20
 
 ### Added
-- Context manager support for BrainEngine (`__enter__` and `__exit__`)
-- Intelligent file resolution in `read_note` that lists all candidates for ambiguous matches
-- Unified ChromaDB configuration to always use HTTP client
+- `resolve_note(name)` and `get_note_chunks(path)` as the canonical MCP drill-down workflow
+- explicit `main()` and pure indexing helpers in `brain_indexer.py`
+- reranker fallback to preserve vector results when reranking fails
 
 ### Changed
-- Simplified configuration system to remove dynamic client selection
-- Updated all modules to consistently use HTTP client only
-- Improved documentation and examples
-- Enhanced error messages for file resolution
+- standardized on `BrainQueryEngine` as the active engine abstraction
+- moved note identity toward canonical vault-relative `path`
+- updated tests and examples to match the retrieval-first contract
+- kept full-file reading outside the MCP surface
 
 ### Removed
-- Support for PersistentClient and local path configuration
-- `CHROMA_CLIENT_TYPE` environment variable
-- `CHROMA_PATH` environment variable
+- broken `read_full_note` MCP flow
+- stale `BrainEngine` references from active code paths
 
 ## [1.1.0] - 2026-04-19
 

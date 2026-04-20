@@ -1,76 +1,42 @@
 """
-Example of using read_note with multiple file matches
-
-This example demonstrates how the improved read_note method handles
-ambiguous file names by listing all candidates.
+Examples for canonical path resolution and chunk inspection.
 """
 
-from brain_mcp_server import BrainEngine
-from pathlib import Path
-from config import Config
+from query_engine import BrainQueryEngine
 
-def setup_test_files():
-    """Setup some test files for demonstration"""
-    vault_path = Path(Config.VAULT_PATH)
 
-    # Create test directory structure
-    test_dirs = [
-        vault_path / "frontend",
-        vault_path / "backend",
-        vault_path / "mobile"
-    ]
-
-    for dir_path in test_dirs:
-        dir_path.mkdir(exist_ok=True)
-
-        # Create a test file in each directory
-        test_file = dir_path / "design.md"
-        test_file.write_text(f"# {dir_path.name.title()} Design\n\nThis is the {dir_path.name} design document.")
-
-def example_ambiguous_file_resolution():
-    """Example showing how read_note handles ambiguous file names"""
-    print("=== Ambiguous File Resolution Example ===")
-
-    # Initialize BrainEngine
-    engine = BrainEngine()
-
+def example_resolve_and_chunk():
+    engine = BrainQueryEngine()
     try:
-        # Try to read a file that exists in multiple locations
-        result = engine.read_note("design.md")
-        print("Reading 'design.md':")
-        print(result)
-        print()
+        print("=== resolve_note ===")
+        candidates = engine.resolve_note("design.md")
+        for candidate in candidates:
+            print("-", candidate["path"])
 
-        # Try to read a file that exists in only one location
-        result = engine.read_note("README.md")  # Assuming this exists
-        if "Multiple files found" not in result and "not found" not in result:
-            print("Reading 'README.md':")
-            print(result[:200] + "..." if len(result) > 200 else result)
-            print()
-
+        if candidates:
+            canonical_path = candidates[0]["path"]
+            print(f"\n=== get_note_chunks({canonical_path}) ===")
+            for chunk in engine.get_note_chunks(canonical_path):
+                print(f"- [{chunk['chunk_index']}] {chunk['header']}")
     finally:
         engine.close()
 
-def example_specific_file_reading():
-    """Example showing how to read a specific file"""
-    print("=== Specific File Reading Example ===")
 
-    # If you know the specific file path, you can read it directly
-    # This would typically be done by specifying the full path or
-    # by selecting from the candidates list
+def example_direct_read():
+    engine = BrainQueryEngine()
+    try:
+        candidates = engine.resolve_note("README.md")
+        if not candidates:
+            print("README.md not found in the configured vault.")
+            return
 
-    vault_path = Path(Config.VAULT_PATH)
-    specific_file = vault_path / "frontend" / "design.md"
+        note = engine.get_note_by_path(candidates[0]["path"])
+        print(f"\n=== get_note_by_path({note['path']}) ===")
+        print(note["content"][:200] + "..." if len(note["content"]) > 200 else note["content"])
+    finally:
+        engine.close()
 
-    if specific_file.exists():
-        content = specific_file.read_text()
-        print(f"Reading specific file {specific_file}:")
-        print(content[:200] + "..." if len(content) > 200 else content)
 
 if __name__ == "__main__":
-    # Note: This example assumes you have a vault setup
-    # Uncomment the following line to create test files
-    # setup_test_files()
-
-    example_ambiguous_file_resolution()
-    example_specific_file_reading()
+    example_resolve_and_chunk()
+    example_direct_read()

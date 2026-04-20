@@ -1,244 +1,231 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import sys
 import os
+import shutil
+import tempfile
+import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-# Add the project root to the path so we can import our modules
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 class TestConfig(unittest.TestCase):
-    """Test the configuration module"""
-
     def setUp(self):
-        # Store original environment variables
-        self.original_chroma_host = os.environ.get('CHROMA_HOST')
-        self.original_chroma_port = os.environ.get('CHROMA_PORT')
+        self.original_chroma_host = os.environ.get("CHROMA_HOST")
+        self.original_chroma_port = os.environ.get("CHROMA_PORT")
 
-        # Clear any existing environment variables that might interfere
-        if 'CHROMA_HOST' in os.environ:
-            del os.environ['CHROMA_HOST']
-        if 'CHROMA_PORT' in os.environ:
-            del os.environ['CHROMA_PORT']
-
-        # Reload the config module to pick up changes
-        if 'config' in sys.modules:
-            del sys.modules['config']
+        os.environ.pop("CHROMA_HOST", None)
+        os.environ.pop("CHROMA_PORT", None)
 
     def tearDown(self):
-        # Restore original environment variables
         if self.original_chroma_host is not None:
-            os.environ['CHROMA_HOST'] = self.original_chroma_host
-        if self.original_chroma_port is not None:
-            os.environ['CHROMA_PORT'] = self.original_chroma_port
+            os.environ["CHROMA_HOST"] = self.original_chroma_host
+        else:
+            os.environ.pop("CHROMA_HOST", None)
 
-        # Reload the config module to restore original state
-        if 'config' in sys.modules:
-            del sys.modules['config']
+        if self.original_chroma_port is not None:
+            os.environ["CHROMA_PORT"] = self.original_chroma_port
+        else:
+            os.environ.pop("CHROMA_PORT", None)
 
     def test_http_chroma_config(self):
-        """Test HTTP ChromaDB configuration"""
-        os.environ['CHROMA_HOST'] = 'test-host'
-        os.environ['CHROMA_PORT'] = '8080'
+        os.environ["CHROMA_HOST"] = "test-host"
+        os.environ["CHROMA_PORT"] = "8080"
 
         from config import Config
-        config = Config.get_chroma_client_config()
-        self.assertEqual(config["host"], "test-host")
-        self.assertEqual(config["port"], 8080)
+
+        self.assertEqual(Config.get_chroma_client_config(), {"host": "test-host", "port": 8080})
 
 
-class TestBrainEngine(unittest.TestCase):
-    """Test the BrainEngine class"""
+class BrainQueryEngineUnitTest(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.temp_dir, "frontend"), exist_ok=True)
+        os.makedirs(os.path.join(self.temp_dir, "backend"), exist_ok=True)
 
-    @patch('neo4j.GraphDatabase.driver')
-    @patch('chromadb.HttpClient')
-    def test_init_http_client(self, mock_chroma_client, mock_neo4j_driver):
-        """Test BrainEngine initialization with HTTP client"""
-        # Mock the ChromaDB client
-        mock_chroma_instance = MagicMock()
-        mock_chroma_client.return_value = mock_chroma_instance
-        mock_chroma_instance.get_collection.return_value = MagicMock()
+        with open(os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8") as file:
+            file.write("# Frontend Design\n\n## Tokens\nButton tokens.\n")
 
-        # Mock the Neo4j driver
-        mock_neo4j_driver.return_value = MagicMock()
+        with open(os.path.join(self.temp_dir, "backend", "design.md"), "w", encoding="utf-8") as file:
+            file.write("# Backend Design\n\n## Contracts\nAPI contracts.\n")
 
-        try:
-            from brain_mcp_server import BrainEngine
-            engine = BrainEngine()
+        with open(os.path.join(self.temp_dir, "frontend", "guide.md"), "w", encoding="utf-8") as file:
+            file.write("# Guide\n\nUseful notes.\n")
 
-            # Verify the mocks were called correctly
-            mock_chroma_client.assert_called_once()
-            mock_neo4j_driver.assert_called_once()
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+        self.config_patch = patch("query_engine.Config")
+        self.mock_config = self.config_patch.start()
+        self.mock_config.VAULT_PATH = self.temp_dir
+        self.mock_config.NEO4J_URI = "bolt://test"
+        self.mock_config.NEO4J_USER = "neo4j"
+        self.mock_config.NEO4J_PASSWORD = "secret"
+        self.mock_config.MODEL_NAME = "bge-m3:latest"
+        self.mock_config.RERANK_MODEL_NAME = "rerank-model"
+        self.mock_config.RERANK_THRESHOLD = "0.5"
+        self.mock_config.get_chroma_client_config.return_value = {"host": "localhost", "port": 8000}
 
-    def test_close_method(self):
-        """Test that close method properly closes Neo4j connection"""
-        with patch('neo4j.GraphDatabase.driver') as mock_neo4j_driver:
-            mock_driver = MagicMock()
-            mock_neo4j_driver.return_value = mock_driver
+        self.chroma_patch = patch("query_engine.chromadb.HttpClient")
+        self.neo4j_patch = patch("query_engine.GraphDatabase.driver")
 
-            try:
-                from brain_mcp_server import BrainEngine
-                engine = BrainEngine()
-                engine.close()
-                mock_driver.close.assert_called_once()
-            except Exception as e:
-                # This might fail due to import issues in test environment, which is expected
-                pass
+        self.mock_http_client = self.chroma_patch.start()
+        self.mock_driver_factory = self.neo4j_patch.start()
 
-    def test_context_manager(self):
-        """Test that BrainEngine works as context manager"""
-        with patch('neo4j.GraphDatabase.driver') as mock_neo4j_driver:
-            mock_driver = MagicMock()
-            mock_neo4j_driver.return_value = mock_driver
+        self.mock_collection = MagicMock()
+        self.mock_http_client.return_value.get_collection.return_value = self.mock_collection
 
-            try:
-                from brain_mcp_server import BrainEngine
-                with BrainEngine() as engine:
-                    # Engine should be created and usable
-                    pass
-                # close() should be called automatically when exiting context
-                mock_driver.close.assert_called_once()
-            except Exception as e:
-                # This might fail due to import issues in test environment, which is expected
-                pass
+        self.mock_driver = MagicMock()
+        self.mock_driver_factory.return_value = self.mock_driver
 
-    @patch('pathlib.Path.rglob')
-    def test_read_note_single_file(self, mock_rglob):
-        """Test read_note with single file match"""
-        mock_path = MagicMock()
-        mock_path.read_text.return_value = "Test content"
-        mock_rglob.return_value = [mock_path]
+        from query_engine import BrainQueryEngine
 
-        try:
-            from brain_mcp_server import BrainEngine
-            engine = BrainEngine()
+        self.engine = BrainQueryEngine()
 
-            # Mock the config
-            with patch('brain_mcp_server.Config') as mock_config:
-                mock_config.VAULT_PATH = "/test/vault"
+    def tearDown(self):
+        self.engine.close()
+        self.chroma_patch.stop()
+        self.neo4j_patch.stop()
+        self.config_patch.stop()
+        shutil.rmtree(self.temp_dir)
 
-                result = engine.read_note("test.md")
-                self.assertEqual(result, "Test content")
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+    def test_resolve_note_returns_canonical_candidates(self):
+        candidates = self.engine.resolve_note("design.md")
 
-    @patch('pathlib.Path.rglob')
-    def test_read_note_multiple_files(self, mock_rglob):
-        """Test read_note with multiple file matches"""
-        mock_path1 = MagicMock()
-        mock_path1.__str__.return_value = "/test/vault/subdir1/test.md"
-        mock_path1.relative_to.return_value = "subdir1/test.md"
+        self.assertEqual(
+            [candidate["path"] for candidate in candidates],
+            ["backend/design.md", "frontend/design.md"],
+        )
 
-        mock_path2 = MagicMock()
-        mock_path2.__str__.return_value = "/test/vault/subdir2/test.md"
-        mock_path2.relative_to.return_value = "subdir2/test.md"
+    def test_get_note_by_path_reads_canonical_path(self):
+        note = self.engine.get_note_by_path("frontend/design.md")
 
-        mock_rglob.return_value = [mock_path1, mock_path2]
+        self.assertEqual(note["path"], "frontend/design.md")
+        self.assertEqual(note["filename"], "design.md")
+        self.assertIn("Frontend Design", note["content"])
 
-        try:
-            from brain_mcp_server import BrainEngine
-            engine = BrainEngine()
+    def test_get_note_by_path_rejects_outside_vault(self):
+        with self.assertRaises(ValueError):
+            self.engine.get_note_by_path("../outside.md")
 
-            # Mock the config
-            with patch('brain_mcp_server.Config') as mock_config:
-                mock_config.VAULT_PATH = "/test/vault"
+    def test_get_note_chunks_requires_disambiguation(self):
+        with self.assertRaises(ValueError):
+            self.engine.get_note_chunks("design.md")
 
-                result = engine.read_note("test.md")
-                self.assertIn("Multiple files found", result)
-                self.assertIn("subdir1/test.md", result)
-                self.assertIn("subdir2/test.md", result)
-                self.assertNotIn("Please specify which file you want to read", result)
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+    def test_get_note_chunks_returns_header_chunks_for_canonical_path(self):
+        chunks = self.engine.get_note_chunks("frontend/design.md")
 
-    @patch('pathlib.Path.rglob')
-    def test_read_note_no_files(self, mock_rglob):
-        """Test read_note with no file matches"""
-        mock_rglob.return_value = iter([])
+        self.assertEqual(chunks[0]["path"], "frontend/design.md")
+        self.assertEqual(chunks[0]["header"], "Frontend Design")
+        self.assertEqual(chunks[1]["header"], "Tokens")
 
-        try:
-            from brain_mcp_server import BrainEngine
-            engine = BrainEngine()
+    def test_rerank_results_falls_back_to_original_results_when_model_fails(self):
+        results = [
+            ("doc-1", {"filename": "guide.md"}),
+            ("doc-2", {"filename": "design.md"}),
+        ]
 
-            # Mock the config
-            with patch('brain_mcp_server.Config') as mock_config:
-                mock_config.VAULT_PATH = "/test/vault"
+        with patch("query_engine.ollama.generate", side_effect=RuntimeError("missing model")):
+            reranked = self.engine.rerank_results("design", results)
 
-                result = engine.read_note("nonexistent.md")
-                self.assertIn("not found", result)
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+        self.assertEqual(reranked, results)
+
+    def test_rerank_results_falls_back_when_no_score_passes_threshold(self):
+        results = [
+            ("doc-1", {"filename": "guide.md"}),
+            ("doc-2", {"filename": "design.md"}),
+        ]
+
+        responses = [{"response": "0.1"}, {"response": "0.2"}]
+        with patch("query_engine.ollama.generate", side_effect=responses):
+            reranked = self.engine.rerank_results("design", results)
+
+        self.assertEqual(reranked, results)
 
 
-class TestBrainQueryEngine(unittest.TestCase):
-    """Test the BrainQueryEngine class"""
+class BrainIndexerUnitTest(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.temp_dir, "frontend"), exist_ok=True)
 
-    @patch('neo4j.GraphDatabase.driver')
-    @patch('chromadb.HttpClient')
-    def test_init_http_client(self, mock_chroma_client, mock_neo4j_driver):
-        """Test BrainQueryEngine initialization with HTTP client"""
-        # Mock the ChromaDB client
-        mock_chroma_instance = MagicMock()
-        mock_chroma_client.return_value = mock_chroma_instance
-        mock_chroma_instance.get_collection.return_value = MagicMock()
+        with open(os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8") as file:
+            file.write("# Frontend Design\n\n## Tokens\nButton tokens. #design #ui\n")
 
-        # Mock the Neo4j driver
-        mock_neo4j_driver.return_value = MagicMock()
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
 
-        try:
-            from query_engine import BrainQueryEngine
-            engine = BrainQueryEngine()
+    def test_build_note_record_preserves_path_tags_and_chunks(self):
+        from brain_indexer import build_note_record
 
-            # Verify the mocks were called correctly
-            mock_chroma_client.assert_called_once()
-            mock_neo4j_driver.assert_called_once()
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+        record = build_note_record(
+            Path(os.path.join(self.temp_dir, "frontend", "design.md")),
+            Path(self.temp_dir),
+            strategy="headers",
+        )
 
-    def test_close_method(self):
-        """Test that close method properly closes Neo4j connection"""
-        with patch('neo4j.GraphDatabase.driver') as mock_neo4j_driver:
-            mock_driver = MagicMock()
-            mock_neo4j_driver.return_value = mock_driver
+        self.assertEqual(record["path"], "frontend/design.md")
+        self.assertEqual(record["tags"], ["design", "ui"])
+        self.assertEqual(record["chunks"][0]["header"], "Frontend Design")
+        self.assertEqual(record["chunks"][1]["header"], "Tokens")
 
-            try:
-                from query_engine import BrainQueryEngine
-                engine = BrainQueryEngine()
-                engine.close()
-                mock_driver.close.assert_called_once()
-            except Exception as e:
-                # This might fail due to import issues in test environment, which is expected
-                pass
+    def test_index_vault_uses_injected_dependencies(self):
+        from brain_indexer import index_vault
 
+        fake_collection = MagicMock()
+        fake_driver = MagicMock()
 
-class TestObsidianIndexer(unittest.TestCase):
-    """Test the ObsidianIndexer class"""
+        summary = index_vault(
+            vault_root=self.temp_dir,
+            collection=fake_collection,
+            neo4j_driver=fake_driver,
+            strategy="headers",
+        )
 
-    @patch('chromadb.HttpClient')
-    def test_init_http_client(self, mock_chroma_client):
-        """Test ObsidianIndexer initialization with HTTP client"""
-        # Mock the ChromaDB client
-        mock_chroma_instance = MagicMock()
-        mock_chroma_client.return_value = mock_chroma_instance
-        mock_chroma_instance.get_or_create_collection.return_value = MagicMock()
-
-        try:
-            from indexer import ObsidianIndexer
-            indexer = ObsidianIndexer()
-
-            # Verify the mock was called correctly
-            mock_chroma_client.assert_called_once()
-        except Exception as e:
-            # This might fail due to import issues in test environment, which is expected
-            pass
+        self.assertEqual(summary["processed_files"], 1)
+        self.assertEqual(summary["indexed_chunks"], 2)
+        fake_collection.upsert.assert_called_once()
+        fake_driver.session.assert_called_once()
 
 
-if __name__ == '__main__':
+class BrainMCPServerUnitTest(unittest.TestCase):
+    def test_resolve_note_formats_candidates(self):
+        fake_engine = MagicMock()
+        fake_engine.resolve_note.return_value = [
+            {"path": "backend/design.md", "filename": "design.md", "score": 0},
+            {"path": "frontend/design.md", "filename": "design.md", "score": 1},
+        ]
+
+        with patch("brain_mcp_server.get_engine", return_value=fake_engine):
+            from brain_mcp_server import resolve_note
+
+            output = resolve_note("design.md")
+
+        self.assertIn("Candidates for 'design.md':", output)
+        self.assertIn("backend/design.md", output)
+        self.assertIn("frontend/design.md", output)
+
+    def test_get_note_chunks_formats_chunk_summary(self):
+        fake_engine = MagicMock()
+        fake_engine.get_note_chunks.return_value = [
+            {
+                "path": "frontend/design.md",
+                "filename": "design.md",
+                "header": "Frontend Design",
+                "content": "Overview",
+                "chunk_index": 0,
+            },
+            {
+                "path": "frontend/design.md",
+                "filename": "design.md",
+                "header": "Tokens",
+                "content": "Button tokens.",
+                "chunk_index": 1,
+            },
+        ]
+
+        with patch("brain_mcp_server.get_engine", return_value=fake_engine):
+            from brain_mcp_server import get_note_chunks
+
+            output = get_note_chunks("frontend/design.md")
+
+        self.assertIn("Chunks for frontend/design.md:", output)
+        self.assertIn("[0] Frontend Design", output)
+        self.assertIn("[1] Tokens", output)
+
+
+if __name__ == "__main__":
     unittest.main()
