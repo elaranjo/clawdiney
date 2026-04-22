@@ -33,6 +33,7 @@ class TestConfig(unittest.TestCase):
 
         # Force reload to pick up new environment variables
         import config as config_module
+
         importlib.reload(config_module)
 
         self.assertEqual(
