@@ -155,4 +155,8 @@ if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     mount_path = os.environ.get("MCP_MOUNT_PATH")
     logger.info(f"Starting MCP server with transport={transport}")
-    mcp.run(transport=transport, mount_path=mount_path)
+    # mount_path is optional, only pass if set
+    run_kwargs = {"transport": transport}  # type: ignore[arg-type]
+    if mount_path:
+        run_kwargs["mount_path"] = mount_path
+    mcp.run(**run_kwargs)  # type: ignore[arg-type]
