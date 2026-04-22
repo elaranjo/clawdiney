@@ -62,6 +62,8 @@ services:
       - ENABLE_RERANK=${ENABLE_RERANK:-true}
       - OLLAMA_HOST=${OLLAMA_HOST:-host.docker.internal}
       - MCP_TRANSPORT=streamable-http
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${VAULT_MOUNT_PATH:-${HOME}/Documents/ObsidianVault}:/vault:ro
     networks:

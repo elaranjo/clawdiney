@@ -55,11 +55,44 @@ class Config:
 
     # Model
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
-    RERANK_MODEL_NAME = os.getenv(
-        "RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
+    RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "")
     RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", str(RERANK_THRESHOLD_DEFAULT))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
+
+    @classmethod
+    def validate_ollama_models(cls) -> list[str]:
+        """
+        Validate that required Ollama models are available.
+        Returns list of warning messages (empty if all OK).
+        """
+        warnings = []
+
+        try:
+            import ollama
+            client = ollama.Client()
+            available_models = client.list()
+            model_names = [m["name"] for m in available_models.get("models", [])]
+
+            # Check embedding model
+            if cls.MODEL_NAME not in model_names:
+                warnings.append(
+                    f"Embedding model '{cls.MODEL_NAME}' not found in Ollama. "
+                    f"Run: ollama pull {cls.MODEL_NAME}"
+                )
+
+            # Check rerank model (only if configured)
+            if cls.ENABLE_RERANK and cls.RERANK_MODEL_NAME:
+                if cls.RERANK_MODEL_NAME not in model_names:
+                    warnings.append(
+                        f"Rerank model '{cls.RERANK_MODEL_NAME}' not found in Ollama. "
+                        f"Run: ollama pull {cls.RERANK_MODEL_NAME} "
+                        f"or set ENABLE_RERANK=false to disable reranking"
+                    )
+
+        except Exception as e:
+            warnings.append(f"Could not connect to Ollama: {e}")
+
+        return warnings
 
     # Chunking
     CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "headers")

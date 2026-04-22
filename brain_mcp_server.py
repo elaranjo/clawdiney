@@ -18,12 +18,18 @@ mcp = FastMCP("Clawdiney", port=8006, host="0.0.0.0")
 _engine_lock = threading.Lock()
 _engine_instance = None
 
+# Auto-sync state tracking
+_auto_sync_started = False
+_auto_sync_completed = threading.Event()
+
 
 def _perform_auto_sync() -> None:
     """
     Perform incremental sync on startup to catch any changes made while MCP was offline.
-    Runs once before the engine is initialized.
+    Runs in background thread to avoid blocking MCP requests.
     """
+    global _auto_sync_started
+
     try:
         from brain_indexer import (
             create_chroma_client,
@@ -56,15 +62,35 @@ def _perform_auto_sync() -> None:
     except Exception as e:
         logger.error(f"Auto-sync failed: {e}")
         # Don't re-raise - allow MCP to start even if sync fails
+    finally:
+        _auto_sync_completed.set()
+
+
+def _ensure_auto_sync():
+    """
+    Ensure auto-sync has been started (runs in background if not).
+    Does not block - returns immediately.
+    """
+    global _auto_sync_started
+
+    with _engine_lock:
+        if not _auto_sync_started:
+            _auto_sync_started = True
+            # Run auto-sync in background thread
+            sync_thread = threading.Thread(target=_perform_auto_sync, daemon=True)
+            sync_thread.start()
 
 
 def get_engine():
     """
     Thread-safe lazy initialization of BrainQueryEngine.
     Uses double-checked locking to avoid lock contention after initialization.
-    Performs auto-sync on first engine initialization.
+    Triggers auto-sync in background on first call (non-blocking).
     """
     global _engine_instance
+
+    # Ensure auto-sync is running in background
+    _ensure_auto_sync()
 
     # Fast path - check without lock
     if _engine_instance is not None:
@@ -73,9 +99,6 @@ def get_engine():
     # Slow path - check with lock
     with _engine_lock:
         if _engine_instance is None:
-            # Perform auto-sync before initializing engine
-            _perform_auto_sync()
-
             try:
                 _engine_instance = BrainQueryEngine()
             except Exception as e:
@@ -184,11 +207,68 @@ def get_note_chunks(filename: str) -> str:
         return f"Error in get_note_chunks: {str(e)}"
 
 
+@mcp.tool()
+def health_check() -> str:
+    """
+    Check health status of all backend services (ChromaDB, Neo4j, Ollama).
+    Use this to diagnose connection issues.
+    """
+    results = []
+    all_healthy = True
+
+    # Check ChromaDB
+    try:
+        from brain_indexer import create_chroma_client, create_collection
+        client = create_chroma_client()
+        collection = create_collection(client)
+        count = collection.count()
+        results.append(f"✅ ChromaDB: OK ({count} vectors)")
+    except Exception as e:
+        results.append(f"❌ ChromaDB: FAILED - {e}")
+        all_healthy = False
+
+    # Check Neo4j
+    try:
+        from brain_indexer import create_neo4j_driver
+        driver = create_neo4j_driver()
+        with driver.session() as session:
+            result = session.run("MATCH (n) RETURN count(n) as count")
+            count = result.single()["count"]
+        driver.close()
+        results.append(f"✅ Neo4j: OK ({count} nodes)")
+    except Exception as e:
+        results.append(f"❌ Neo4j: FAILED - {e}")
+        all_healthy = False
+
+    # Check Ollama
+    try:
+        import ollama
+        client = ollama.Client()
+        models = client.list()
+        model_count = len(models.get("models", []))
+        results.append(f"✅ Ollama: OK ({model_count} models)")
+    except Exception as e:
+        results.append(f"❌ Ollama: FAILED - {e}")
+        all_healthy = False
+
+    status = "✅ All services healthy" if all_healthy else "⚠️ Some services unhealthy"
+    return f"{status}\n\n" + "\n".join(results)
+
+
 if __name__ == "__main__":
     import signal
     import sys
 
     setup_logging()
+
+    # Validate Ollama models on startup
+    logger.info("Validating Ollama models...")
+    ollama_warnings = Config.validate_ollama_models()
+    if ollama_warnings:
+        for warning in ollama_warnings:
+            logger.warning(warning)
+    else:
+        logger.info("Ollama models validated successfully")
 
     def cleanup(signum=None, frame=None):
         """Clean up resources on shutdown."""
