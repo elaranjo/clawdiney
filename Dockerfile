@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
@@ -14,6 +14,9 @@ COPY brain_mcp_server.py .
 COPY brain_indexer.py .
 COPY query_engine.py .
 COPY config.py .
+COPY constants.py .
+COPY chunking.py .
+COPY logging_config.py .
 COPY mcp_wrapper.py .
 COPY init_mcp.sh .
 
@@ -29,6 +32,10 @@ RUN chown appuser:appuser /app/init_mcp.sh && \
     chown -R appuser:appuser /app
 
 USER appuser
+
+# Healthcheck para o serviço MCP (verifica se a porta está ouvindo)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import socket; socket.create_connection(('localhost', 8006), timeout=5)" || exit 1
 
 # Comando padrão
 CMD ["/app/init_mcp.sh"]

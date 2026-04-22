@@ -136,13 +136,23 @@ def get_note_chunks(filename: str) -> str:
 
 
 if __name__ == "__main__":
+    import signal
+    import sys
+
     setup_logging()
-    try:
-        transport = os.environ.get("MCP_TRANSPORT", "stdio")
-        mount_path = os.environ.get("MCP_MOUNT_PATH")
-        logger.info(f"Starting MCP server with transport={transport}")
-        mcp.run(transport=transport, mount_path=mount_path)
-    finally:
-        # Clean up resources
+
+    def cleanup(signum=None, frame=None):
+        """Clean up resources on shutdown."""
+        logger.info("Shutting down MCP server...")
         if _engine_instance is not None:
             _engine_instance.close()
+        sys.exit(0)
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    mount_path = os.environ.get("MCP_MOUNT_PATH")
+    logger.info(f"Starting MCP server with transport={transport}")
+    mcp.run(transport=transport, mount_path=mount_path)

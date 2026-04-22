@@ -70,6 +70,15 @@ class Config:
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 
+    @staticmethod
+    def _validate_password_strength(password: str) -> None:
+        """Validate Neo4j password strength."""
+        if len(password) < 8:
+            raise ValueError(
+                "Neo4j password must be at least 8 characters long. "
+                "Consider using a stronger password (12+ chars recommended)."
+            )
+
     @classmethod
     def get_neo4j_password(cls) -> str | None:
         """Get Neo4j password, allowing missing value during tests."""
@@ -78,6 +87,8 @@ class Config:
             raise ValueError(
                 "Neo4j password is required. Set NEO4J_PASSWORD in .env or environment."
             )
+        if password and "PYTEST_CURRENT_TEST" not in os.environ:
+            cls._validate_password_strength(password)
         return password
 
     @classmethod
