@@ -1,11 +1,16 @@
 from pathlib import Path
 import re
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 import chromadb
 import ollama
 from neo4j import GraphDatabase
 
 from config import Config
+from chunking import markdown_chunking
+
+logger = logging.getLogger(__name__)
 
 class BrainQueryEngine:
     def __init__(self):
@@ -29,7 +34,10 @@ class BrainQueryEngine:
         )
 
     def close(self):
+        """Close all database connections (Neo4j + ChromaDB)."""
         self.neo4j_driver.close()
+        if hasattr(self.chroma_client, 'close'):
+            self.chroma_client.close()
 
     def get_embedding(self, text):
         response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
@@ -57,35 +65,7 @@ class BrainQueryEngine:
 
     def _split_note_into_chunks(self, content):
         """Split markdown text by headers for local note inspection."""
-        chunks = []
-        current_header = "Root"
-        current_lines = []
-
-        for line in content.splitlines():
-            if re.match(r"^#+\s", line):
-                if current_lines:
-                    chunks.append({
-                        "header": current_header,
-                        "content": "\n".join(current_lines).strip(),
-                    })
-                current_header = line.lstrip("#").strip() or "Root"
-                current_lines = []
-            else:
-                current_lines.append(line)
-
-        if current_lines:
-            chunks.append({
-                "header": current_header,
-                "content": "\n".join(current_lines).strip(),
-            })
-
-        if not chunks and content.strip():
-            chunks.append({
-                "header": "Root",
-                "content": content.strip(),
-            })
-
-        return chunks
+        return markdown_chunking(content)
 
     def resolve_note(self, name):
         """Return candidate notes that match a basename or relative path fragment."""
@@ -171,36 +151,105 @@ class BrainQueryEngine:
             result = session.run(query, note_ref=note_ref)
             return [record["path"] or record["name"] for record in result]
 
-    def rerank_results(self, query, results):
-        """Rerank results using cross-encoder model"""
-        scored_results = []
-        successful_scores = 0
-        for doc, meta in results:
-            combined = f"Output only the relevance score between 0 and 1. Query: {query}\nDocument: {doc}"
+    def _score_single_doc(self, query, doc):
+        """Score a single document against query. Returns score or None."""
+        combined = f"Output only the relevance score between 0 and 1. Query: {query}\nDocument: {doc}"
+        try:
+            response = ollama.generate(
+                model=Config.RERANK_MODEL_NAME,
+                prompt=combined,
+                options={"temperature": 0}
+            )
+            score_str = response.get('response', '').strip()
             try:
-                response = ollama.generate(
-                    model=Config.RERANK_MODEL_NAME,
-                    prompt=combined,
-                    options={"temperature": 0}
-                )
-                # Extract score from response
-                score_str = response.get('response', '').strip()
-                try:
-                    score = float(score_str)
-                    successful_scores += 1
-                except:
-                    score = None
-            except Exception:
-                score = None
-            scored_results.append((score, doc, meta))
+                return float(score_str)
+            except ValueError:
+                logger.warning(f"Invalid score format from reranker: {score_str!r}")
+                return None
+        except (TimeoutError, FuturesTimeoutError) as e:
+            logger.warning(f"Rerank timeout for document: {e}")
+            return None
+        except (ConnectionError, RuntimeError) as e:
+            logger.warning(f"Rerank model error: {e}")
+            return None
 
-        if successful_scores == 0:
+    def rerank_results(self, query, results, timeout=30, batch_size=5):
+        """
+        Rerank results using cross-encoder model with timeout and batch processing.
+
+        Args:
+            query: Search query string
+            results: List of (document, metadata) tuples
+            timeout: Maximum seconds for entire reranking operation (default: 30s)
+            batch_size: Number of documents to process in parallel (default: 5)
+
+        Returns:
+            Reranked results sorted by score, or original results if rerank fails/times out.
+        """
+        if not results:
             return results
 
-        threshold = float(Config.RERANK_THRESHOLD)
-        filtered_results = [item for item in scored_results if item[0] is not None and item[0] >= threshold]
+        scored_results = []
+        successful_scores = 0
 
+        try:
+            with ThreadPoolExecutor(max_workers=batch_size) as executor:
+                futures = {
+                    executor.submit(self._score_single_doc, query, doc): (doc, meta)
+                    for doc, meta in results
+                }
+
+                # Wait for all futures with global timeout
+                import signal
+
+                def timeout_handler(signum, frame):
+                    raise FuturesTimeoutError(f"Rerank exceeded {timeout}s timeout")
+
+                # Set alarm for timeout
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(timeout)
+
+                try:
+                    for future in futures:
+                        doc, meta = futures[future]
+                        try:
+                            score = future.result(timeout=timeout)
+                            if score is not None:
+                                successful_scores += 1
+                            scored_results.append((score, doc, meta))
+                        except FuturesTimeoutError:
+                            logger.warning("Document scoring timed out")
+                            scored_results.append((None, doc, meta))
+                        except Exception as e:
+                            logger.warning(f"Error scoring document: {e}")
+                            scored_results.append((None, doc, meta))
+
+                    signal.alarm(0)  # Cancel alarm
+                finally:
+                    signal.signal(signal.SIGALRM, old_handler)
+
+        except FuturesTimeoutError:
+            logger.error(f"Rerank operation exceeded {timeout}s timeout, using fallback")
+            return results
+        except Exception as e:
+            logger.error(f"Rerank failed: {e}, using fallback")
+            return results
+
+        # Fallback if no scores were successful
+        if successful_scores == 0:
+            logger.info("No successful rerank scores, falling back to original ranking")
+            return results
+
+        # Filter by threshold
+        threshold = float(Config.RERANK_THRESHOLD)
+        filtered_results = [
+            item for item in scored_results
+            if item[0] is not None and item[0] >= threshold
+        ]
+
+        # If all results filtered out, return original
         if not filtered_results:
+            logger.info(f"All results below threshold ({threshold}), returning original")
             return results
 
         filtered_results.sort(key=lambda x: x[0], reverse=True)

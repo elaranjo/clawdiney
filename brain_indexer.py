@@ -7,6 +7,7 @@ from chromadb.utils.embedding_functions import EmbeddingFunction
 from neo4j import GraphDatabase
 
 from config import Config
+from chunking import chunk_text
 
 
 class OllamaEmbedding(EmbeddingFunction):
@@ -47,79 +48,9 @@ def extract_tags(content):
     return sorted(set(re.findall(r"(?<!\w)#([A-Za-z0-9_/-]+)", content)))
 
 
-def fixed_size_chunking(text, chunk_size=500, overlap=50):
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append({"header": "Fixed Size", "content": chunk.strip()})
-        start = end - overlap if overlap < chunk_size else end
-
-    return [chunk for chunk in chunks if chunk["content"]]
-
-
-def semantic_chunking(text, chunk_size=None):
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    chunks = []
-    current_chunk = ""
-    target_size = chunk_size or Config.CHUNK_SIZE
-
-    for sentence in sentences:
-        if len(current_chunk) + len(sentence) > target_size and current_chunk:
-            chunks.append({"header": "Semantic", "content": current_chunk.strip()})
-            current_chunk = sentence
-        else:
-            current_chunk = f"{current_chunk} {sentence}".strip()
-
-    if current_chunk:
-        chunks.append({"header": "Semantic", "content": current_chunk.strip()})
-
-    return chunks
-
-
-def markdown_chunking(text):
-    chunks = []
-    current_header = "Root"
-    current_lines = []
-
-    for line in text.splitlines():
-        if re.match(r"^#+\s", line):
-            if current_lines:
-                chunks.append({
-                    "header": current_header,
-                    "content": "\n".join(current_lines).strip(),
-                })
-            current_header = line.lstrip("#").strip() or "Root"
-            current_lines = []
-        else:
-            current_lines.append(line)
-
-    if current_lines:
-        chunks.append({
-            "header": current_header,
-            "content": "\n".join(current_lines).strip(),
-        })
-
-    if not chunks and text.strip():
-        chunks.append({"header": "Root", "content": text.strip()})
-
-    return [chunk for chunk in chunks if chunk["content"] or chunk["header"] != "Root"]
-
-
-def chunk_text(text, strategy=None, chunk_size=None, overlap=None):
-    strategy = strategy or Config.CHUNKING_STRATEGY
-    chunk_size = chunk_size or Config.CHUNK_SIZE
-    overlap = overlap if overlap is not None else Config.CHUNK_OVERLAP
-
-    if strategy == "headers":
-        return markdown_chunking(text)
-    if strategy == "fixed":
-        return fixed_size_chunking(text, chunk_size, overlap)
-    if strategy == "semantic":
-        return semantic_chunking(text, chunk_size)
-    return markdown_chunking(text)
+def extract_wikilinks(content):
+    """Extract [[WikiLinks]] from content and return list of target names."""
+    return re.findall(r'\[\[([^\]]+)\]\]', content)
 
 
 def discover_vault_files(vault_root):
@@ -133,6 +64,7 @@ def build_note_record(file_path, vault_root, strategy=None):
 
     relative_path = file_path.relative_to(vault_root).as_posix()
     tags = extract_tags(content)
+    wikilinks = extract_wikilinks(content)
     chunks = chunk_text(content, strategy=strategy)
 
     return {
@@ -141,6 +73,7 @@ def build_note_record(file_path, vault_root, strategy=None):
         "source": str(file_path),
         "content": content,
         "tags": tags,
+        "wikilinks": wikilinks,
         "chunks": chunks,
     }
 
@@ -185,50 +118,73 @@ def index_note_records(collection, note_records):
 
 
 def sync_graph(neo4j_driver, note_records):
+    """
+    Sync notes to Neo4j graph with transactional guarantees.
+    Uses pre-extracted wikilinks for O(n) link creation instead of O(n²) cartesian join.
+    """
     with neo4j_driver.session() as session:
-        session.run(
-            """
-            UNWIND $files AS file
-            MERGE (n:Note {path: file.path})
-            SET n.name = file.name,
-                n.content = file.content,
-                n.last_indexed = timestamp(),
-                n.tags = file.tags
-            """,
-            files=[
-                {
-                    "name": note["name"],
-                    "path": note["path"],
-                    "content": note["content"],
-                    "tags": note["tags"],
-                }
-                for note in note_records
-            ],
-        )
+        tx = session.begin_transaction()
+        try:
+            # 1. Create/update all note nodes
+            tx.run(
+                """
+                UNWIND $files AS file
+                MERGE (n:Note {path: file.path})
+                SET n.name = file.name,
+                    n.content = file.content,
+                    n.last_indexed = timestamp(),
+                    n.tags = file.tags
+                """,
+                files=[
+                    {
+                        "name": note["name"],
+                        "path": note["path"],
+                        "content": note["content"],
+                        "tags": note["tags"],
+                    }
+                    for note in note_records
+                ],
+            )
 
-        session.run("MATCH ()-[r:LINKS_TO|SHARES_TAG]->() DELETE r")
+            # 2. Delete old relationships (not nodes)
+            tx.run("MATCH ()-[r:LINKS_TO|SHARES_TAG]->() DELETE r")
 
-        session.run(
-            """
-            MATCH (a:Note), (b:Note)
-            WHERE a.path <> b.path
-              AND (
-                a.content CONTAINS '[[' + b.path + ']]'
-                OR a.content CONTAINS '[[' + b.name + ']]'
-              )
-            MERGE (a)-[:LINKS_TO]->(b)
-            """
-        )
+            # 3. Create LINKS_TO relationships using pre-extracted wikilinks (O(n))
+            links_data = []
+            for note in note_records:
+                for link_target in note["wikilinks"]:
+                    links_data.append({
+                        "source_path": note["path"],
+                        "target_name": link_target,
+                    })
 
-        session.run(
-            """
-            MATCH (a:Note), (b:Note)
-            WHERE a.path <> b.path
-            WITH a, b, [tag IN a.tags WHERE tag IN b.tags] AS shared_tags
-            UNWIND shared_tags AS tag
-            MERGE (a)-[:SHARES_TAG {tag: tag}]->(b)
-            """
-        )
+            if links_data:
+                tx.run(
+                    """
+                    UNWIND $links AS link
+                    MATCH (source:Note {path: link.source_path})
+                    MATCH (target:Note)
+                    WHERE target.path = link.target_name OR target.name = link.target_name
+                    MERGE (source)-[:LINKS_TO]->(target)
+                    """,
+                    links=links_data,
+                )
+
+            # 4. Create SHARES_TAG relationships
+            tx.run(
+                """
+                MATCH (a:Note), (b:Note)
+                WHERE a.path <> b.path
+                WITH a, b, [tag IN a.tags WHERE tag IN b.tags] AS shared_tags
+                UNWIND shared_tags AS tag
+                MERGE (a)-[:SHARES_TAG {tag: tag}]->(b)
+                """,
+            )
+
+            tx.commit()
+        except Exception as e:
+            tx.rollback()
+            raise RuntimeError(f"Failed to sync graph: {e}") from e
 
 
 def index_vault(vault_root=None, collection=None, neo4j_driver=None, strategy=None):

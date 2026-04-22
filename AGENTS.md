@@ -104,7 +104,10 @@ The system integrates with Codex via the Model Context Protocol (MCP). When prop
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
 2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
-3. `read_full_note(filename)` - Read the entire content of a specific note (lists candidates for ambiguous matches)
+3. `resolve_note(name)` - Resolve ambiguous note names to canonical vault-relative paths
+4. `get_note_chunks(path)` - List chunk headers for a note (structured preview)
+
+For reading full notes, use your editor or file system directly after resolving the path with `resolve_note`.
 
 Configuration example in `~/.Codex.json`:
 ```json

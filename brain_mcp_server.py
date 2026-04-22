@@ -1,4 +1,6 @@
 import os
+import threading
+from functools import lru_cache
 
 from query_engine import BrainQueryEngine
 from mcp.server.fastmcp import FastMCP
@@ -6,18 +8,31 @@ from mcp.server.fastmcp import FastMCP
 # Initialize FastMCP Server
 mcp = FastMCP("Clawdiney", port=8006, host="0.0.0.0")
 
-# Singleton engine instance
-engine = None
+# Thread-safe singleton engine initialization
+_engine_lock = threading.Lock()
+_engine_instance = None
+
 
 def get_engine():
-    """Lazy initialization of engine with error handling"""
-    global engine
-    if engine is None:
-        try:
-            engine = BrainQueryEngine()
-        except Exception as e:
-            raise Exception(f"Failed to initialize BrainQueryEngine: {str(e)}")
-    return engine
+    """
+    Thread-safe lazy initialization of BrainQueryEngine.
+    Uses double-checked locking to avoid lock contention after initialization.
+    """
+    global _engine_instance
+
+    # Fast path - check without lock
+    if _engine_instance is not None:
+        return _engine_instance
+
+    # Slow path - check with lock
+    with _engine_lock:
+        if _engine_instance is None:
+            try:
+                _engine_instance = BrainQueryEngine()
+            except Exception as e:
+                raise Exception(f"Failed to initialize BrainQueryEngine: {str(e)}") from e
+
+    return _engine_instance
 
 
 def _format_candidates(query, candidates):

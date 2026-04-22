@@ -11,6 +11,26 @@ def _get_bool(name, default=False):
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _require_env(name, description=None, allow_test_mode=True):
+    """
+    Require an environment variable, raising ValueError if not set.
+
+    Args:
+        name: Environment variable name
+        description: Human-readable description for error message
+        allow_test_mode: If True, allow missing value when running under pytest
+    """
+    value = os.getenv(name)
+    if value is None:
+        # Allow missing values during testing (mocks will handle it)
+        if allow_test_mode and ("pytest" in globals() or "PYTEST_CURRENT_TEST" in os.environ):
+            return None
+        desc = description or name
+        raise ValueError(f"{desc} is required. Set {name} in .env or environment.")
+    return value
+
+
 class Config:
     """Centralized configuration class for Clawdiney"""
 
@@ -33,7 +53,7 @@ class Config:
     # Neo4j
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-    NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "change-this-password")
+    NEO4J_PASSWORD = _require_env("NEO4J_PASSWORD", "Neo4j password")
 
     @classmethod
     def get_chroma_client_config(cls):
