@@ -217,8 +217,9 @@ def incremental_sync(
 
     if force_full:
         logger.info("Force full sync requested")
-        changes = indexer._get_all_vault_files()
-        deleted = []
+        changes_dict: dict[Path, str] = indexer._get_all_vault_files()
+        changes: list[Path] = list(changes_dict.keys())
+        deleted: list[Path] = []
         is_full_sync = True
     else:
         new_or_modified, deleted = indexer.detect_changes()
