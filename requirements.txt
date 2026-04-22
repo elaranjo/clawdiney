@@ -27,3 +27,6 @@ httpx==0.28.1
 
 # Requests (for testing)
 requests==2.32.3
+
+# File Watching (for auto-sync)
+watchdog==4.0.2

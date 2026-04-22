@@ -1,9 +1,11 @@
 import logging
 import os
 import threading
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from config import Config
 from logging_config import setup_logging
 from query_engine import BrainQueryEngine
 
@@ -17,10 +19,50 @@ _engine_lock = threading.Lock()
 _engine_instance = None
 
 
+def _perform_auto_sync() -> None:
+    """
+    Perform incremental sync on startup to catch any changes made while MCP was offline.
+    Runs once before the engine is initialized.
+    """
+    try:
+        from brain_indexer import (
+            create_chroma_client,
+            create_collection,
+            create_neo4j_driver,
+        )
+        from incremental_indexer import incremental_sync
+
+        vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
+        logger.info(f"Checking for vault changes in: {vault_root}")
+
+        collection = create_collection(create_chroma_client())
+        driver = create_neo4j_driver()
+
+        result = incremental_sync(
+            vault_root=vault_root,
+            collection=collection,
+            neo4j_driver=driver,
+        )
+
+        if result["files_synced"] > 0 or result["files_deleted"] > 0:
+            logger.info(
+                f"Auto-sync complete: {result['files_synced']} files synced, "
+                f"{result['files_deleted']} deleted, {result['indexed_chunks']} chunks"
+            )
+        else:
+            logger.info("Vault is up to date. No sync needed.")
+
+        driver.close()
+    except Exception as e:
+        logger.error(f"Auto-sync failed: {e}")
+        # Don't re-raise - allow MCP to start even if sync fails
+
+
 def get_engine():
     """
     Thread-safe lazy initialization of BrainQueryEngine.
     Uses double-checked locking to avoid lock contention after initialization.
+    Performs auto-sync on first engine initialization.
     """
     global _engine_instance
 
@@ -31,6 +73,9 @@ def get_engine():
     # Slow path - check with lock
     with _engine_lock:
         if _engine_instance is None:
+            # Perform auto-sync before initializing engine
+            _perform_auto_sync()
+
             try:
                 _engine_instance = BrainQueryEngine()
             except Exception as e:

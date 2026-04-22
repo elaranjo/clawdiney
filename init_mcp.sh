@@ -59,14 +59,17 @@ NEO4J_HOST="${NEO4J_TARGET%%:*}"
 NEO4J_PORT="${NEO4J_TARGET##*:}"
 wait_for_tcp "${NEO4J_HOST}" "${NEO4J_PORT}" "Neo4j"
 
-# Indexar o vault (se houver arquivos)
-echo "🔍 Indexando o vault..."
-if [ -f "/app/brain_indexer.py" ]; then
-    echo "   Executando brain_indexer.py..."
-    python /app/brain_indexer.py
-else
-    echo "   brain_indexer.py não encontrado. Pulando indexação."
-fi
+# Verificar modo de operação
+WATCHER_MODE="${WATCHER_MODE:-false}"
 
-echo "🚀 Iniciando servidor MCP..."
-exec python /app/mcp_wrapper.py
+if [ "$WATCHER_MODE" = "true" ]; then
+    echo "🔍 Iniciando file watcher com auto-sync..."
+    exec python /app/watch_vault.py
+else
+    # Indexação inicial é feita pelo MCP server (auto-sync)
+    echo "ℹ️  Indexação inicial será feita pelo MCP server (auto-sync)"
+    echo "💡 Dica: Use WATCHER_MODE=true para rodar o file watcher contínuo"
+    echo ""
+    echo "🚀 Iniciando servidor MCP..."
+    exec python /app/mcp_wrapper.py
+fi
