@@ -101,7 +101,7 @@ The `setup_brain.sh` script automatically executes:
 
 ### 2. Configure Your MCP Client
 
-To enable a local MCP client to use the Brain natively, add the configuration to your client config:
+**Option A: Local Python (Recommended for development)**
 
 ```json
 {
@@ -119,6 +119,24 @@ To enable a local MCP client to use the Brain natively, add the configuration to
   }
 }
 ```
+
+**Option B: Streamable HTTP (For Docker deployments)**
+
+```json
+{
+  "projects": {
+    "/home/YOUR_WORK_DIRECTORY": {
+      "mcpServers": {
+        "clawdiney": {
+          "url": "http://localhost:8006/mcp"
+        }
+      }
+    }
+  }
+}
+```
+
+For Docker deployment instructions, see [DOCKER_MCP.md](DOCKER_MCP.md).
 
 ---
 
@@ -207,14 +225,35 @@ If MCP is not available, use the direct script:
 
 ## 🔄 Updating Knowledge
 
-Whenever the Vault is updated (new SOPs, patterns, etc.):
+**Good news:** Clawdiney now has **automatic sync**! No need to manually re-index.
+
+### Auto-Sync (Default)
+The MCP server automatically checks for vault changes on startup and syncs any modified files.
+
+### Real-Time Watcher (Optional)
+For active development, run the file watcher that syncs changes in real-time:
 
 ```bash
-# Re-index the Vault
-./venv/bin/python3 brain_indexer.py
+# Continuous watcher mode
+WATCHER_MODE=true ./run_brain.sh
+
+# Or directly
+./venv/bin/python3 watch_vault.py
 ```
 
-The agent will have immediate access to new information in the next query after re-indexing.
+### Manual Sync (On-Demand)
+```bash
+# Check sync status
+./venv/bin/python3 sync_vault.py --status
+
+# Incremental sync (only changed files)
+./venv/bin/python3 sync_vault.py
+
+# Full sync (reindex everything)
+./venv/bin/python3 sync_vault.py --full
+```
+
+The agent has immediate access to new/modified notes after sync completes.
 
 ---
 
@@ -258,8 +297,17 @@ docker compose down
 # Start all services (including MCP Server)
 ./run_brain.sh
 
-# Re-index the Vault
-./venv/bin/python3 brain_indexer.py
+# Start with file watcher (real-time sync)
+WATCHER_MODE=true ./run_brain.sh
+
+# Check sync status
+./venv/bin/python3 sync_vault.py --status
+
+# Incremental sync (only changed files)
+./venv/bin/python3 sync_vault.py
+
+# Full sync (reindex everything)
+./venv/bin/python3 sync_vault.py --full
 
 # Test search
 ./ask_brain.sh "your query"
@@ -276,16 +324,18 @@ docker compose down
 **Technically yes, but we don't recommend it.** If you point to your personal vault, it may cause confusion with the agent's data.
 
 ### "How long does indexing take?"
-It depends on the Vault size:
+Initial full sync depends on vault size:
 - **Small vault** (< 100 notes): ~30 seconds
 - **Medium vault** (100-500 notes): 1-2 minutes
 - **Large vault** (> 500 notes): 3-5 minutes
 
+**Incremental sync** (subsequent syncs) only processes changed files and is much faster (typically 1-5 seconds per file).
+
 ### "Do I need to re-index every time I update an SOP?"
-**Yes. For now** Whenever the Vault changes, run:
-```bash
-./venv/bin/python3 brain_indexer.py
-```
+**No!** Auto-sync handles this automatically:
+- **On MCP startup:** Checks for changes and syncs automatically
+- **With Watcher mode:** Syncs in real-time as you edit files
+- **Manual:** Run `python sync_vault.py` for on-demand sync
 
 ### "Does it work on Windows?"
 **Yes!** Through **WSL2** (Windows Subsystem for Linux). Follow these steps:
