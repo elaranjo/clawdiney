@@ -2,15 +2,17 @@
 """Cliente HTTP simples para testar o servidor MCP do Clawdiney."""
 
 import asyncio
-import httpx
 import json
+
+import httpx
+
 
 async def test_mcp_server():
     """Testa o servidor MCP usando HTTP direto."""
     url = "http://localhost:8006/mcp"
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream"
+        "Accept": "application/json, text/event-stream",
     }
 
     async with httpx.AsyncClient() as client:
@@ -23,12 +25,9 @@ async def test_mcp_server():
                 "params": {
                     "protocolVersion": "2024-04-04",
                     "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
+                    "clientInfo": {"name": "test-client", "version": "1.0.0"},
                 },
-                "id": 1
+                "id": 1,
             }
 
             response = await client.post(url, json=init_data, headers=headers)
@@ -43,14 +42,16 @@ async def test_mcp_server():
                 # Tentar parsear o JSON
                 try:
                     # Extrair o JSON dos dados SSE
-                    lines = content.split('\n')
+                    lines = content.split("\n")
                     for line in lines:
-                        if line.startswith('data: '):
+                        if line.startswith("data: "):
                             json_str = line[6:]  # Remover 'data: '
                             result = json.loads(json_str)
-                            if 'result' in result:
+                            if "result" in result:
                                 print("✅ Servidor inicializado com sucesso!")
-                                print(f"Informações do servidor: {result['result']['serverInfo']}")
+                                print(
+                                    f"Informações do servidor: {result['result']['serverInfo']}"
+                                )
                                 break
                 except json.JSONDecodeError as e:
                     print(f"Erro ao parsear JSON: {e}")
@@ -62,11 +63,9 @@ async def test_mcp_server():
                 "method": "call_tool",
                 "params": {
                     "name": "search_brain",
-                    "arguments": {
-                        "query": "architecture patterns"
-                    }
+                    "arguments": {"query": "architecture patterns"},
                 },
-                "id": 2
+                "id": 2,
             }
 
             response = await client.post(url, json=search_data, headers=headers)
@@ -78,20 +77,24 @@ async def test_mcp_server():
 
                 # Tentar parsear o JSON
                 try:
-                    lines = content.split('\n')
+                    lines = content.split("\n")
                     for line in lines:
-                        if line.startswith('data: '):
+                        if line.startswith("data: "):
                             json_str = line[6:]  # Remover 'data: '
                             result = json.loads(json_str)
-                            if 'result' in result:
+                            if "result" in result:
                                 print("✅ Função search_brain executada com sucesso!")
-                                content_result = result['result'].get('content', '')
+                                content_result = result["result"].get("content", "")
                                 if len(content_result) > 500:
-                                    content_result = content_result[:500] + "... (truncado)"
+                                    content_result = (
+                                        content_result[:500] + "... (truncado)"
+                                    )
                                 print(f"Resultado: {content_result}")
                                 break
-                            elif 'error' in result:
-                                print(f"❌ Erro na função search_brain: {result['error']}")
+                            elif "error" in result:
+                                print(
+                                    f"❌ Erro na função search_brain: {result['error']}"
+                                )
                                 break
                 except json.JSONDecodeError as e:
                     print(f"Erro ao parsear JSON: {e}")
@@ -102,6 +105,7 @@ async def test_mcp_server():
 
     print("\n✅ Testes concluídos!")
     return True
+
 
 if __name__ == "__main__":
     asyncio.run(test_mcp_server())

@@ -4,6 +4,7 @@ Integration and load tests for Clawdiney.
 These tests verify end-to-end functionality and performance
 with realistic vault sizes.
 """
+
 import shutil
 import tempfile
 import time
@@ -18,8 +19,6 @@ from brain_indexer import (
     extract_wikilinks,
     index_vault,
 )
-from chunking import Chunk
-from config import Config
 
 
 class TestChunkingIntegration:
@@ -51,9 +50,7 @@ Final thoughts.
         """Verify fixed-size chunking creates proper overlaps."""
         content = "A" * 1000  # 1000 characters
 
-        chunks = chunk_text(
-            content, strategy="fixed", chunk_size=300, overlap=50
-        )
+        chunks = chunk_text(content, strategy="fixed", chunk_size=300, overlap=50)
 
         assert len(chunks) >= 4  # 1000/300 = 3.33, so at least 4 chunks
         assert all(len(chunk["content"]) > 0 for chunk in chunks)
@@ -120,9 +117,7 @@ class TestNoteRecordBuilder:
                 "# Test Note\n\nContent here.\n\n[[Linked Note]]\n\n#tag"
             )
 
-            record = build_note_record(
-                test_file, Path(tmpdir), strategy="headers"
-            )
+            record = build_note_record(test_file, Path(tmpdir), strategy="headers")
 
             assert record is not None
             assert record["name"] == "test.md"
@@ -168,7 +163,7 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco.
 """
             # Add some wikilinks
             if i > 0:
-                content += f"\n\nSee also [[note_{i-1:03d}]]\n"
+                content += f"\n\nSee also [[note_{i - 1:03d}]]\n"
 
             # Add some tags
             content += f"\n\n#test #note-{i % 10}\n"
@@ -186,12 +181,8 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco.
         mock_collection = Mock()
         mock_driver = Mock()
         mock_session = Mock()
-        mock_driver.session.return_value.__enter__ = Mock(
-            return_value=mock_session
-        )
-        mock_driver.session.return_value.__exit__ = Mock(
-            return_value=None
-        )
+        mock_driver.session.return_value.__enter__ = Mock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = Mock(return_value=None)
 
         start_time = time.time()
 

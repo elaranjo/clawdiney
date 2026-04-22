@@ -68,7 +68,7 @@ def extract_tags(content: str) -> list[str]:
 
 def extract_wikilinks(content: str) -> list[str]:
     """Extract [[WikiLinks]] from content and return list of target names."""
-    return re.findall(r'\[\[([^\]]+)\]\]', content)
+    return re.findall(r"\[\[([^\]]+)\]\]", content)
 
 
 def discover_vault_files(vault_root: Path) -> list[Path]:
@@ -177,10 +177,12 @@ def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
             links_data = []
             for note in note_records:
                 for link_target in note["wikilinks"]:
-                    links_data.append({
-                        "source_path": note["path"],
-                        "target_name": link_target,
-                    })
+                    links_data.append(
+                        {
+                            "source_path": note["path"],
+                            "target_name": link_target,
+                        }
+                    )
 
             if links_data:
                 tx.run(
@@ -234,14 +236,18 @@ def index_vault(
         for file_path in discover_vault_files(vault_root):
             total_files += 1
             try:
-                note_record = build_note_record(file_path, vault_root, strategy=strategy)
+                note_record = build_note_record(
+                    file_path, vault_root, strategy=strategy
+                )
                 if note_record is None:
                     logger.warning(f"Skipping empty file: {file_path.name}")
                     continue
 
                 note_records.append(note_record)
                 processed_files += 1
-                logger.debug(f"Processed: {note_record['path']} ({len(note_record['chunks'])} chunks)")
+                logger.debug(
+                    f"Processed: {note_record['path']} ({len(note_record['chunks'])} chunks)"
+                )
             except Exception as exc:
                 logger.error(f"Error processing {file_path}: {exc}")
 

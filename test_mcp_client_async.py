@@ -2,9 +2,10 @@
 """Cliente simples para testar o servidor MCP do Clawdiney."""
 
 import asyncio
-import sys
+
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+
 
 async def test_mcp_server():
     """Testa o servidor MCP usando transporte SSE."""
@@ -20,8 +21,10 @@ async def test_mcp_server():
                 # Testar a função search_brain
                 print("\n🔍 Testando função search_brain...")
                 try:
-                    result = await session.call_tool("search_brain", {"query": "architecture patterns"})
-                    print(f"✅ Função search_brain executada com sucesso!")
+                    result = await session.call_tool(
+                        "search_brain", {"query": "architecture patterns"}
+                    )
+                    print("✅ Função search_brain executada com sucesso!")
                     content = result.content
                     if len(content) > 500:
                         content = content[:500] + "... (truncado)"
@@ -33,7 +36,7 @@ async def test_mcp_server():
                 print("\n🔍 Testando função resolve_note...")
                 try:
                     result = await session.call_tool("resolve_note", {"name": "design"})
-                    print(f"✅ Função resolve_note executada com sucesso!")
+                    print("✅ Função resolve_note executada com sucesso!")
                     content = result.content
                     print(f"Resultado: {content}")
                 except Exception as e:
@@ -42,8 +45,10 @@ async def test_mcp_server():
                 # Testar a função explore_graph
                 print("\n🔍 Testando função explore_graph...")
                 try:
-                    result = await session.call_tool("explore_graph", {"note_name": "design"})
-                    print(f"✅ Função explore_graph executada com sucesso!")
+                    result = await session.call_tool(
+                        "explore_graph", {"note_name": "design"}
+                    )
+                    print("✅ Função explore_graph executada com sucesso!")
                     content = result.content
                     if len(content) > 500:
                         content = content[:500] + "... (truncado)"
@@ -54,8 +59,10 @@ async def test_mcp_server():
                 # Testar a função get_note_chunks
                 print("\n🔍 Testando função get_note_chunks...")
                 try:
-                    result = await session.call_tool("get_note_chunks", {"filename": "Agent_Protocol.md"})
-                    print(f"✅ Função get_note_chunks executada com sucesso!")
+                    result = await session.call_tool(
+                        "get_note_chunks", {"filename": "Agent_Protocol.md"}
+                    )
+                    print("✅ Função get_note_chunks executada com sucesso!")
                     content = result.content
                     if len(content) > 500:
                         content = content[:500] + "... (truncado)"
@@ -69,6 +76,7 @@ async def test_mcp_server():
 
     print("\n✅ Todos os testes concluídos!")
     return True
+
 
 if __name__ == "__main__":
     asyncio.run(test_mcp_server())

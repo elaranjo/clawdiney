@@ -31,7 +31,9 @@ class TestConfig(unittest.TestCase):
 
         from config import Config
 
-        self.assertEqual(Config.get_chroma_client_config(), {"host": "test-host", "port": 8080})
+        self.assertEqual(
+            Config.get_chroma_client_config(), {"host": "test-host", "port": 8080}
+        )
 
 
 class BrainQueryEngineUnitTest(unittest.TestCase):
@@ -40,13 +42,19 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         os.makedirs(os.path.join(self.temp_dir, "frontend"), exist_ok=True)
         os.makedirs(os.path.join(self.temp_dir, "backend"), exist_ok=True)
 
-        with open(os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8") as file:
+        with open(
+            os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8"
+        ) as file:
             file.write("# Frontend Design\n\n## Tokens\nButton tokens.\n")
 
-        with open(os.path.join(self.temp_dir, "backend", "design.md"), "w", encoding="utf-8") as file:
+        with open(
+            os.path.join(self.temp_dir, "backend", "design.md"), "w", encoding="utf-8"
+        ) as file:
             file.write("# Backend Design\n\n## Contracts\nAPI contracts.\n")
 
-        with open(os.path.join(self.temp_dir, "frontend", "guide.md"), "w", encoding="utf-8") as file:
+        with open(
+            os.path.join(self.temp_dir, "frontend", "guide.md"), "w", encoding="utf-8"
+        ) as file:
             file.write("# Guide\n\nUseful notes.\n")
 
         self.config_patch = patch("query_engine.Config")
@@ -58,7 +66,10 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         self.mock_config.MODEL_NAME = "bge-m3:latest"
         self.mock_config.RERANK_MODEL_NAME = "rerank-model"
         self.mock_config.RERANK_THRESHOLD = "0.5"
-        self.mock_config.get_chroma_client_config.return_value = {"host": "localhost", "port": 8000}
+        self.mock_config.get_chroma_client_config.return_value = {
+            "host": "localhost",
+            "port": 8000,
+        }
 
         self.chroma_patch = patch("query_engine.chromadb.HttpClient")
         self.neo4j_patch = patch("query_engine.GraphDatabase.driver")
@@ -67,7 +78,9 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         self.mock_driver_factory = self.neo4j_patch.start()
 
         self.mock_collection = MagicMock()
-        self.mock_http_client.return_value.get_collection.return_value = self.mock_collection
+        self.mock_http_client.return_value.get_collection.return_value = (
+            self.mock_collection
+        )
 
         self.mock_driver = MagicMock()
         self.mock_driver_factory.return_value = self.mock_driver
@@ -119,7 +132,9 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
             ("doc-2", {"filename": "design.md"}),
         ]
 
-        with patch("query_engine.ollama.generate", side_effect=RuntimeError("missing model")):
+        with patch(
+            "query_engine.ollama.generate", side_effect=RuntimeError("missing model")
+        ):
             reranked = self.engine.rerank_results("design", results)
 
         self.assertEqual(reranked, results)
@@ -142,7 +157,9 @@ class BrainIndexerUnitTest(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(self.temp_dir, "frontend"), exist_ok=True)
 
-        with open(os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8") as file:
+        with open(
+            os.path.join(self.temp_dir, "frontend", "design.md"), "w", encoding="utf-8"
+        ) as file:
             file.write("# Frontend Design\n\n## Tokens\nButton tokens. #design #ui\n")
 
     def tearDown(self):

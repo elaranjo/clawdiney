@@ -2,8 +2,9 @@
 """Script para testar a conexão com o servidor MCP do Clawdiney."""
 
 import json
+
 import requests
-import time
+
 
 def send_request(url, headers, data):
     """Envia uma requisição para o servidor MCP e retorna a resposta."""
@@ -12,8 +13,8 @@ def send_request(url, headers, data):
         # Ler a resposta
         for line in response.iter_lines():
             if line:
-                decoded_line = line.decode('utf-8')
-                if decoded_line.startswith('data: '):
+                decoded_line = line.decode("utf-8")
+                if decoded_line.startswith("data: "):
                     json_data = decoded_line[6:]  # Remover o prefixo 'data: '
                     try:
                         result = json.loads(json_data)
@@ -24,12 +25,13 @@ def send_request(url, headers, data):
         print(f"❌ Erro ao conectar ao servidor: {e}")
         return None
 
+
 def test_mcp_server():
     """Testa a conexão com o servidor MCP e suas funções."""
     url = "http://localhost:8006/mcp"
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream"
+        "Accept": "application/json, text/event-stream",
     }
 
     # Etapa 1: Inicializar o servidor
@@ -40,35 +42,30 @@ def test_mcp_server():
         "params": {
             "protocolVersion": "2024-04-04",
             "capabilities": {},
-            "clientInfo": {
-                "name": "test-client",
-                "version": "1.0.0"
-            }
+            "clientInfo": {"name": "test-client", "version": "1.0.0"},
         },
-        "id": 1
+        "id": 1,
     }
 
     result = send_request(url, headers, init_data)
-    if not result or 'error' in result:
+    if not result or "error" in result:
         print(f"❌ Falha na inicialização: {result.get('error', 'Erro desconhecido')}")
         return False
 
     print("✅ Servidor inicializado com sucesso!")
-    print(f"Informações do servidor: {json.dumps(result['result']['serverInfo'], indent=2)}")
+    print(
+        f"Informações do servidor: {json.dumps(result['result']['serverInfo'], indent=2)}"
+    )
 
     # Etapa 2: Enviar notificação de inicialização concluída
     print("\n📡 Enviando notificação de inicialização concluída...")
-    initialized_data = {
-        "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {}
-    }
+    initialized_data = {"jsonrpc": "2.0", "method": "initialized", "params": {}}
 
     # Para notificações, o ID deve ser null
     initialized_data["id"] = None
 
     try:
-        response = requests.post(url, headers=headers, json=initialized_data)
+        requests.post(url, headers=headers, json=initialized_data)
         print("✅ Notificação de inicialização enviada!")
     except Exception as e:
         print(f"⚠️ Erro ao enviar notificação (pode ser esperado): {e}")
@@ -80,22 +77,20 @@ def test_mcp_server():
         "method": "call_tool",
         "params": {
             "name": "search_brain",
-            "arguments": {
-                "query": "architecture patterns"
-            }
+            "arguments": {"query": "architecture patterns"},
         },
-        "id": 2
+        "id": 2,
     }
 
     result = send_request(url, headers, search_data)
-    if result and 'result' in result:
+    if result and "result" in result:
         print("✅ Função search_brain executada com sucesso!")
         # Limitar a saída para não ficar muito longa
-        output = result['result'].get('content', '')
+        output = result["result"].get("content", "")
         if len(output) > 500:
             output = output[:500] + "... (truncado)"
         print(f"Resultado da busca: {output}")
-    elif result and 'error' in result:
+    elif result and "error" in result:
         print(f"❌ Erro na função search_brain: {result['error']}")
     else:
         print("❌ Falha ao executar search_brain")
@@ -105,25 +100,21 @@ def test_mcp_server():
     resolve_data = {
         "jsonrpc": "2.0",
         "method": "call_tool",
-        "params": {
-            "name": "resolve_note",
-            "arguments": {
-                "name": "design"
-            }
-        },
-        "id": 3
+        "params": {"name": "resolve_note", "arguments": {"name": "design"}},
+        "id": 3,
     }
 
     result = send_request(url, headers, resolve_data)
-    if result and 'result' in result:
+    if result and "result" in result:
         print("✅ Função resolve_note executada com sucesso!")
         print(f"Resultado: {result['result'].get('content', '')}")
-    elif result and 'error' in result:
+    elif result and "error" in result:
         print(f"❌ Erro na função resolve_note: {result['error']}")
     else:
         print("❌ Falha ao executar resolve_note")
 
     print("\n✅ Todos os testes concluídos!")
+
 
 if __name__ == "__main__":
     test_mcp_server()

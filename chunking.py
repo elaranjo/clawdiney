@@ -4,6 +4,7 @@ Shared chunking utilities for Clawdiney.
 This module provides text chunking strategies used by both the indexer
 and query engine for consistent text segmentation.
 """
+
 import re
 from typing import TypedDict
 
@@ -19,7 +20,9 @@ class Chunk(TypedDict):
 
 
 def fixed_size_chunking(
-    text: str, chunk_size: int = CHUNK_SIZE_DEFAULT, overlap: int = CHUNK_OVERLAP_DEFAULT
+    text: str,
+    chunk_size: int = CHUNK_SIZE_DEFAULT,
+    overlap: int = CHUNK_OVERLAP_DEFAULT,
 ) -> list[Chunk]:
     """
     Split text into fixed-size chunks with overlap.
@@ -90,20 +93,24 @@ def markdown_chunking(text: str) -> list[Chunk]:
     for line in text.splitlines():
         if re.match(r"^#+\s", line):
             if current_lines:
-                chunks.append({
-                    "header": current_header,
-                    "content": "\n".join(current_lines).strip(),
-                })
+                chunks.append(
+                    {
+                        "header": current_header,
+                        "content": "\n".join(current_lines).strip(),
+                    }
+                )
             current_header = line.lstrip("#").strip() or "Root"
             current_lines = []
         else:
             current_lines.append(line)
 
     if current_lines:
-        chunks.append({
-            "header": current_header,
-            "content": "\n".join(current_lines).strip(),
-        })
+        chunks.append(
+            {
+                "header": current_header,
+                "content": "\n".join(current_lines).strip(),
+            }
+        )
 
     if not chunks and text.strip():
         chunks.append({"header": "Root", "content": text.strip()})

@@ -12,13 +12,13 @@ def main():
     mount_path = os.environ.get("MCP_MOUNT_PATH")
 
     # Verificar se o vault existe
-    vault_path = os.environ.get('VAULT_PATH', '/vault')
+    vault_path = os.environ.get("VAULT_PATH", "/vault")
     if not Path(vault_path).exists():
         print(f"⚠️  Caminho do Vault não encontrado: {vault_path}", flush=True)
 
     # Verificar se o modelo Ollama está disponível
     try:
-        model_name = os.environ.get('MODEL_NAME', 'bge-m3:latest')
+        model_name = os.environ.get("MODEL_NAME", "bge-m3:latest")
         print(f"🔍 Verificando modelo Ollama: {model_name}", flush=True)
     except Exception as e:
         print(f"⚠️  Aviso: Problema ao verificar modelo Ollama: {e}", flush=True)
@@ -37,8 +37,10 @@ def main():
     except Exception as e:
         print(f"❌ Erro ao iniciar servidor MCP: {e}", flush=True)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

@@ -34,7 +34,9 @@ def _require_env(
     value = os.getenv(name)
     if value is None:
         # Allow missing values during testing (mocks will handle it)
-        if allow_test_mode and ("pytest" in globals() or "PYTEST_CURRENT_TEST" in os.environ):
+        if allow_test_mode and (
+            "pytest" in globals() or "PYTEST_CURRENT_TEST" in os.environ
+        ):
             return None
         desc = description or name
         raise ValueError(f"{desc} is required. Set {name} in .env or environment.")
@@ -45,13 +47,17 @@ class Config:
     """Centralized configuration class for Clawdiney"""
 
     # Paths
-    VAULT_PATH = os.path.expanduser(os.getenv("VAULT_PATH", "~/Documents/ObsidianVault"))
+    VAULT_PATH = os.path.expanduser(
+        os.getenv("VAULT_PATH", "~/Documents/ObsidianVault")
+    )
     CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
     CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
 
     # Model
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
-    RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+    RERANK_MODEL_NAME = os.getenv(
+        "RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
     RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", str(RERANK_THRESHOLD_DEFAULT))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
 
@@ -69,13 +75,12 @@ class Config:
         """Get Neo4j password, allowing missing value during tests."""
         password = os.getenv("NEO4J_PASSWORD")
         if password is None and "PYTEST_CURRENT_TEST" not in os.environ:
-            raise ValueError("Neo4j password is required. Set NEO4J_PASSWORD in .env or environment.")
+            raise ValueError(
+                "Neo4j password is required. Set NEO4J_PASSWORD in .env or environment."
+            )
         return password
 
     @classmethod
     def get_chroma_client_config(cls) -> dict[str, Any]:
         """Returns configuration for ChromaDB HTTP client"""
-        return {
-            "host": cls.CHROMA_HOST,
-            "port": cls.CHROMA_PORT
-        }
+        return {"host": cls.CHROMA_HOST, "port": cls.CHROMA_PORT}

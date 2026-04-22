@@ -34,7 +34,9 @@ def get_engine():
             try:
                 _engine_instance = BrainQueryEngine()
             except Exception as e:
-                raise Exception(f"Failed to initialize BrainQueryEngine: {str(e)}") from e
+                raise Exception(
+                    f"Failed to initialize BrainQueryEngine: {str(e)}"
+                ) from e
 
     return _engine_instance
 
@@ -58,7 +60,9 @@ def _format_chunks(chunks):
         lines.append(f"- [{chunk['chunk_index']}] {chunk['header']}")
     return "\n".join(lines)
 
+
 # --- MCP Tools ---
+
 
 @mcp.tool()
 def search_brain(query: str) -> str:
@@ -68,11 +72,16 @@ def search_brain(query: str) -> str:
     """
     try:
         engine = get_engine()
-        logger.info(f"Search query: {query[:50]}..." if len(query) > 50 else f"Search query: {query}")
+        logger.info(
+            f"Search query: {query[:50]}..."
+            if len(query) > 50
+            else f"Search query: {query}"
+        )
         return f"Brain Search Results for '{query}':\n\n{engine.query(query)}"
     except Exception as e:
         logger.error(f"search_brain failed: {e}")
         return f"Error in search_brain: {str(e)}"
+
 
 @mcp.tool()
 def explore_graph(note_name: str) -> str:
@@ -88,10 +97,13 @@ def explore_graph(note_name: str) -> str:
             logger.info(f"No connections found for: {note_name}")
             return f"No direct connections found for note: {note_name}"
         logger.info(f"Found {len(related)} related notes for: {note_name}")
-        return f"Notes connected to {note_name}:\n" + "\n".join([f"- {r}" for r in related])
+        return f"Notes connected to {note_name}:\n" + "\n".join(
+            [f"- {r}" for r in related]
+        )
     except Exception as e:
         logger.error(f"explore_graph failed: {e}")
         return f"Error in explore_graph: {str(e)}"
+
 
 @mcp.tool()
 def resolve_note(name: str) -> str:
@@ -121,6 +133,7 @@ def get_note_chunks(filename: str) -> str:
     except Exception as e:
         logger.error(f"get_note_chunks failed: {e}")
         return f"Error in get_note_chunks: {str(e)}"
+
 
 if __name__ == "__main__":
     setup_logging()

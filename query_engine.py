@@ -13,7 +13,6 @@ from neo4j import GraphDatabase
 from chunking import Chunk, markdown_chunking
 from config import Config
 from constants import (
-    CHUNK_SIZE_DEFAULT,
     RERANK_BATCH_SIZE,
     RERANK_TIMEOUT_SECONDS,
     SEARCH_EXPAND_GRAPH_DEFAULT,
@@ -48,12 +47,13 @@ class BrainQueryEngine:
         # ChromaDB Setup - Always use HTTP client
         chroma_config = Config.get_chroma_client_config()
         self.chroma_client = chromadb.HttpClient(
-            host=chroma_config["host"],
-            port=chroma_config["port"]
+            host=chroma_config["host"], port=chroma_config["port"]
         )
         # Configura timeout para 300 segundos no cliente httpx subjacente
         self.chroma_client.timeout = httpx.Timeout(300.0)
-        self.vector_collection = self.chroma_client.get_collection(name="obsidian_vault")
+        self.vector_collection = self.chroma_client.get_collection(
+            name="obsidian_vault"
+        )
 
         # Neo4j Setup
         self.neo4j_driver = GraphDatabase.driver(
@@ -64,7 +64,7 @@ class BrainQueryEngine:
     def close(self) -> None:
         """Close all database connections (Neo4j + ChromaDB)."""
         self.neo4j_driver.close()
-        if hasattr(self.chroma_client, 'close'):
+        if hasattr(self.chroma_client, "close"):
             self.chroma_client.close()
 
     def __enter__(self) -> "BrainQueryEngine":
@@ -82,7 +82,7 @@ class BrainQueryEngine:
 
     def get_embedding(self, text: str) -> list[float]:
         response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
-        return response['embedding']
+        return response["embedding"]
 
     def _normalize_note_path(self, note_path: str) -> str:
         """Return a canonical vault-relative path and ensure it stays inside the vault."""
@@ -95,7 +95,9 @@ class BrainQueryEngine:
         try:
             return resolved.relative_to(self.vault_root).as_posix()
         except ValueError as exc:
-            raise ValueError(f"Path '{note_path}' is outside the configured vault") from exc
+            raise ValueError(
+                f"Path '{note_path}' is outside the configured vault"
+            ) from exc
 
     def _resolve_note_path(self, note_path: str) -> tuple[Path, str]:
         relative_path = self._normalize_note_path(note_path)
@@ -136,11 +138,13 @@ class BrainQueryEngine:
             if score is None:
                 continue
 
-            candidates.append({
-                "path": relative_path,
-                "filename": filename,
-                "score": score,
-            })
+            candidates.append(
+                {
+                    "path": relative_path,
+                    "filename": filename,
+                    "score": score,
+                }
+            )
 
         candidates.sort(key=lambda item: (item["score"], item["path"]))
         return candidates
@@ -161,7 +165,9 @@ class BrainQueryEngine:
         if not candidates:
             raise FileNotFoundError(f"No notes found for '{filename}'")
         if len(candidates) > 1 and candidates[0]["path"] != filename:
-            candidate_paths = ", ".join(candidate["path"] for candidate in candidates[:10])
+            candidate_paths = ", ".join(
+                candidate["path"] for candidate in candidates[:10]
+            )
             raise ValueError(
                 f"Multiple notes match '{filename}'. Resolve a canonical path first: {candidate_paths}"
             )
@@ -199,9 +205,9 @@ class BrainQueryEngine:
             response = ollama.generate(
                 model=Config.RERANK_MODEL_NAME,
                 prompt=combined,
-                options={"temperature": 0}
+                options={"temperature": 0},
             )
-            score_str = response.get('response', '').strip()
+            score_str = response.get("response", "").strip()
             try:
                 return float(score_str)
             except ValueError:
@@ -274,7 +280,9 @@ class BrainQueryEngine:
                     signal.signal(signal.SIGALRM, old_handler)
 
         except FuturesTimeoutError:
-            logger.error(f"Rerank operation exceeded {timeout}s timeout, using fallback")
+            logger.error(
+                f"Rerank operation exceeded {timeout}s timeout, using fallback"
+            )
             return results
         except Exception as e:
             logger.error(f"Rerank failed: {e}, using fallback")
@@ -288,13 +296,16 @@ class BrainQueryEngine:
         # Filter by threshold
         threshold = float(Config.RERANK_THRESHOLD)
         filtered_results = [
-            item for item in scored_results
+            item
+            for item in scored_results
             if item[0] is not None and item[0] >= threshold
         ]
 
         # If all results filtered out, return original
         if not filtered_results:
-            logger.info(f"All results below threshold ({threshold}), returning original")
+            logger.info(
+                f"All results below threshold ({threshold}), returning original"
+            )
             return results
 
         filtered_results.sort(key=lambda x: x[0], reverse=True)
@@ -322,12 +333,11 @@ class BrainQueryEngine:
         # 1. Semantic Search
         embedding = self.get_embedding(text)
         results = self.vector_collection.query(
-            query_embeddings=[embedding],
-            n_results=n_results
+            query_embeddings=[embedding], n_results=n_results
         )
 
-        docs = results['documents'][0]
-        metadatas = results['metadatas'][0]
+        docs = results["documents"][0]
+        metadatas = results["metadatas"][0]
 
         # 2. Rerank results if enabled
         if use_rerank and Config.ENABLE_RERANK and docs:
@@ -342,8 +352,8 @@ class BrainQueryEngine:
         seen_notes = set()
 
         for doc, meta in zip(docs, metadatas):
-            note_identifier = meta.get('path') or meta['filename']
-            note_label = meta.get('path') or meta['filename']
+            note_identifier = meta.get("path") or meta["filename"]
+            note_label = meta.get("path") or meta["filename"]
             context_briefing.append(f"--- Source: {note_label} ---\n{doc}")
             seen_notes.add(note_identifier)
 
@@ -358,6 +368,7 @@ class BrainQueryEngine:
                         seen_notes.add(rel_note)
 
         return "\n\n".join(context_briefing)
+
 
 if __name__ == "__main__":
     import sys
@@ -374,4 +385,6 @@ if __name__ == "__main__":
     with BrainQueryEngine() as engine:
         briefing = engine.query(query_text)
         logger.info("Query completed successfully")
-        print(f"\n=== BRAIN CONTEXT BRIEFING ===\n\n{briefing}\n\n==============================")
+        print(
+            f"\n=== BRAIN CONTEXT BRIEFING ===\n\n{briefing}\n\n=============================="
+        )

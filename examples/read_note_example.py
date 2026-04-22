@@ -32,7 +32,11 @@ def example_direct_read():
 
         note = engine.get_note_by_path(candidates[0]["path"])
         print(f"\n=== get_note_by_path({note['path']}) ===")
-        print(note["content"][:200] + "..." if len(note["content"]) > 200 else note["content"])
+        print(
+            note["content"][:200] + "..."
+            if len(note["content"]) > 200
+            else note["content"]
+        )
     finally:
         engine.close()
 

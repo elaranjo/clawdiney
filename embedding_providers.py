@@ -4,6 +4,7 @@ Embedding provider strategy pattern for Clawdiney.
 This module defines the protocol for embedding providers and provides
 implementations for Ollama, OpenAI, and other embedding services.
 """
+
 from typing import Protocol, runtime_checkable
 
 
@@ -58,9 +59,7 @@ class OllamaEmbeddingProvider:
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
-        response = self.ollama_client.embeddings(
-            model=self.model_name, prompt=text
-        )
+        response = self.ollama_client.embeddings(model=self.model_name, prompt=text)
         return response["embedding"]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -90,16 +89,12 @@ class OpenAIEmbeddingProvider:
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
-        response = self.client.embeddings.create(
-            model=self.model_name, input=text
-        )
+        response = self.client.embeddings.create(model=self.model_name, input=text)
         return response.data[0].embedding
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts in batch."""
-        response = self.client.embeddings.create(
-            model=self.model_name, input=texts
-        )
+        response = self.client.embeddings.create(model=self.model_name, input=texts)
         return [item.embedding for item in response.data]
 
 
@@ -124,8 +119,6 @@ def get_embedding_provider(provider: str, **kwargs) -> EmbeddingProvider:
 
     if provider not in providers:
         available = ", ".join(providers.keys())
-        raise ValueError(
-            f"Unknown provider: {provider}. Available: {available}"
-        )
+        raise ValueError(f"Unknown provider: {provider}. Available: {available}")
 
     return providers[provider](**kwargs)
