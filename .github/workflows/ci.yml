@@ -74,4 +74,6 @@ jobs:
           pip install mypy
 
       - name: Run mypy
-        run: mypy *.py --ignore-missing-imports --no-strict-optional
+        run: |
+          pip install types-requests
+          mypy *.py --ignore-missing-imports --no-strict-optional
