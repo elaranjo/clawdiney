@@ -8,6 +8,7 @@ import re
 from typing import TypedDict
 
 from config import Config
+from constants import CHUNK_OVERLAP_DEFAULT, CHUNK_SIZE_DEFAULT
 
 
 class Chunk(TypedDict):
@@ -18,7 +19,7 @@ class Chunk(TypedDict):
 
 
 def fixed_size_chunking(
-    text: str, chunk_size: int = 500, overlap: int = 50
+    text: str, chunk_size: int = CHUNK_SIZE_DEFAULT, overlap: int = CHUNK_OVERLAP_DEFAULT
 ) -> list[Chunk]:
     """
     Split text into fixed-size chunks with overlap.
@@ -49,7 +50,7 @@ def semantic_chunking(text: str, chunk_size: int | None = None) -> list[Chunk]:
 
     Args:
         text: Input text to chunk
-        chunk_size: Target chunk size in characters (default: Config.CHUNK_SIZE)
+        chunk_size: Target chunk size in characters (default: CHUNK_SIZE_DEFAULT)
 
     Returns:
         List of dicts with 'header' and 'content' keys
@@ -57,7 +58,7 @@ def semantic_chunking(text: str, chunk_size: int | None = None) -> list[Chunk]:
     sentences = re.split(r"(?<=[.!?])\s+", text)
     chunks: list[Chunk] = []
     current_chunk = ""
-    target_size = chunk_size or Config.CHUNK_SIZE
+    target_size = chunk_size or CHUNK_SIZE_DEFAULT
 
     for sentence in sentences:
         if len(current_chunk) + len(sentence) > target_size and current_chunk:
@@ -123,15 +124,15 @@ def chunk_text(
         text: Input text to chunk
         strategy: Chunking strategy - 'headers', 'fixed', or 'semantic'
                   (default: Config.CHUNKING_STRATEGY)
-        chunk_size: Target chunk size (default: Config.CHUNK_SIZE)
-        overlap: Overlap size for fixed chunking (default: Config.CHUNK_OVERLAP)
+        chunk_size: Target chunk size (default: CHUNK_SIZE_DEFAULT)
+        overlap: Overlap size for fixed chunking (default: CHUNK_OVERLAP_DEFAULT)
 
     Returns:
         List of dicts with 'header' and 'content' keys
     """
     strategy = strategy or Config.CHUNKING_STRATEGY
-    chunk_size = chunk_size or Config.CHUNK_SIZE
-    overlap = overlap if overlap is not None else Config.CHUNK_OVERLAP
+    chunk_size = chunk_size or CHUNK_SIZE_DEFAULT
+    overlap = overlap if overlap is not None else CHUNK_OVERLAP_DEFAULT
 
     if strategy == "headers":
         return markdown_chunking(text)

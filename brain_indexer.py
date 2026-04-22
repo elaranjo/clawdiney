@@ -10,6 +10,7 @@ from neo4j import GraphDatabase
 
 from chunking import Chunk, chunk_text
 from config import Config
+from constants import CHUNK_SIZE_DEFAULT
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ def build_note_record(
     relative_path = file_path.relative_to(vault_root).as_posix()
     tags = extract_tags(content)
     wikilinks = extract_wikilinks(content)
-    chunks = chunk_text(content, strategy=strategy)
+    chunks = chunk_text(content, strategy=strategy, chunk_size=CHUNK_SIZE_DEFAULT)
 
     return {
         "name": file_path.name,

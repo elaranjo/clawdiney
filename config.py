@@ -3,6 +3,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from constants import (
+    CHUNK_OVERLAP_DEFAULT,
+    CHUNK_SIZE_DEFAULT,
+    RERANK_THRESHOLD_DEFAULT,
+)
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -46,13 +52,13 @@ class Config:
     # Model
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
     RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-    RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", "0.5")
+    RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", str(RERANK_THRESHOLD_DEFAULT))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
 
     # Chunking
     CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "headers")
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", str(CHUNK_SIZE_DEFAULT)))
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", str(CHUNK_OVERLAP_DEFAULT)))
 
     # Neo4j
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")

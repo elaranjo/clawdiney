@@ -12,6 +12,14 @@ from neo4j import GraphDatabase
 
 from chunking import Chunk, markdown_chunking
 from config import Config
+from constants import (
+    CHUNK_SIZE_DEFAULT,
+    RERANK_BATCH_SIZE,
+    RERANK_TIMEOUT_SECONDS,
+    SEARCH_EXPAND_GRAPH_DEFAULT,
+    SEARCH_N_RESULTS_DEFAULT,
+    SEARCH_USE_RERANK_DEFAULT,
+)
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -58,6 +66,19 @@ class BrainQueryEngine:
         self.neo4j_driver.close()
         if hasattr(self.chroma_client, 'close'):
             self.chroma_client.close()
+
+    def __enter__(self) -> "BrainQueryEngine":
+        """Enter context manager, returning the engine instance."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Exit context manager, closing all database connections."""
+        self.close()
 
     def get_embedding(self, text: str) -> list[float]:
         response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
@@ -197,8 +218,8 @@ class BrainQueryEngine:
         self,
         query: str,
         results: list[tuple[str, dict[str, Any]]],
-        timeout: int = 30,
-        batch_size: int = 5,
+        timeout: int = RERANK_TIMEOUT_SECONDS,
+        batch_size: int = RERANK_BATCH_SIZE,
     ) -> list[tuple[str, dict[str, Any]]]:
         """
         Rerank results using cross-encoder model with timeout and batch processing.
@@ -282,9 +303,9 @@ class BrainQueryEngine:
     def query(
         self,
         text: str,
-        n_results: int = 3,
-        expand_graph: bool = True,
-        use_rerank: bool = True,
+        n_results: int = SEARCH_N_RESULTS_DEFAULT,
+        expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
+        use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
     ) -> str:
         """
         Hybrid Semantic + Graph search.
@@ -340,6 +361,7 @@ class BrainQueryEngine:
 
 if __name__ == "__main__":
     import sys
+
     setup_logging()
 
     if len(sys.argv) < 2:
@@ -347,10 +369,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     query_text = " ".join(sys.argv[1:])
-    engine = BrainQueryEngine()
-    try:
+
+    # Use context manager for automatic cleanup
+    with BrainQueryEngine() as engine:
         briefing = engine.query(query_text)
         logger.info("Query completed successfully")
         print(f"\n=== BRAIN CONTEXT BRIEFING ===\n\n{briefing}\n\n==============================")
-    finally:
-        engine.close()
