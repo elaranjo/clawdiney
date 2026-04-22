@@ -63,7 +63,14 @@ class Config:
     # Neo4j
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-    NEO4J_PASSWORD = _require_env("NEO4J_PASSWORD", "Neo4j password")
+
+    @classmethod
+    def get_neo4j_password(cls) -> str | None:
+        """Get Neo4j password, allowing missing value during tests."""
+        password = os.getenv("NEO4J_PASSWORD")
+        if password is None and "PYTEST_CURRENT_TEST" not in os.environ:
+            raise ValueError("Neo4j password is required. Set NEO4J_PASSWORD in .env or environment.")
+        return password
 
     @classmethod
     def get_chroma_client_config(cls) -> dict[str, Any]:

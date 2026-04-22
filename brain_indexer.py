@@ -58,7 +58,7 @@ def create_collection(client: chromadb.HttpClient) -> chromadb.Collection:
 def create_neo4j_driver() -> Any:
     return GraphDatabase.driver(
         Config.NEO4J_URI,
-        auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD),
+        auth=(Config.NEO4J_USER, Config.get_neo4j_password()),
     )
 
 

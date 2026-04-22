@@ -58,7 +58,7 @@ class BrainQueryEngine:
         # Neo4j Setup
         self.neo4j_driver = GraphDatabase.driver(
             Config.NEO4J_URI,
-            auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD)
+            auth=(Config.NEO4J_USER, Config.get_neo4j_password()),
         )
 
     def close(self) -> None:
