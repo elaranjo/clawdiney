@@ -144,7 +144,11 @@ def index_note_records(
 def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
     """
     Sync notes to Neo4j graph with transactional guarantees.
-    Uses pre-extracted wikilinks for O(n) link creation instead of O(n²) cartesian join.
+    Uses pre-extracted wikilinks for O(n) link creation and Tag nodes for O(n) tag relationships.
+
+    Schema:
+    - (:Note)-[:LINKS_TO]->(:Note)  # WikiLinks entre notas
+    - (:Note)-[:HAS_TAG]->(:Tag)    # Notas conectadas a nós Tag (O(n) ao invés de O(n²))
     """
     with neo4j_driver.session() as session:
         tx = session.begin_transaction()
@@ -170,8 +174,9 @@ def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
                 ],
             )
 
-            # 2. Delete old relationships (not nodes)
-            tx.run("MATCH ()-[r:LINKS_TO|SHARES_TAG]->() DELETE r")
+            # 2. Delete old relationships and orphan Tag nodes
+            tx.run("MATCH ()-[r:LINKS_TO|HAS_TAG]->() DELETE r")
+            tx.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
 
             # 3. Create LINKS_TO relationships using pre-extracted wikilinks (O(n))
             links_data = []
@@ -196,16 +201,33 @@ def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
                     links=links_data,
                 )
 
-            # 4. Create SHARES_TAG relationships
-            tx.run(
-                """
-                MATCH (a:Note), (b:Note)
-                WHERE a.path <> b.path
-                WITH a, b, [tag IN a.tags WHERE tag IN b.tags] AS shared_tags
-                UNWIND shared_tags AS tag
-                MERGE (a)-[:SHARES_TAG {tag: tag}]->(b)
-                """,
-            )
+            # 4. Create Tag nodes and HAS_TAG relationships (O(n) total)
+            # Collect all tags with their notes
+            tags_to_notes: dict[str, list[str]] = {}
+            for note in note_records:
+                for tag in note["tags"]:
+                    if tag not in tags_to_notes:
+                        tags_to_notes[tag] = []
+                    tags_to_notes[tag].append(note["path"])
+
+            # Create Tag nodes and relationships
+            tag_data = [
+                {"tag": tag, "note_paths": paths}
+                for tag, paths in tags_to_notes.items()
+            ]
+
+            if tag_data:
+                tx.run(
+                    """
+                    UNWIND $tags AS tag_info
+                    MERGE (t:Tag {name: tag_info.tag})
+                    WITH t, tag_info
+                    UNWIND tag_info.note_paths AS note_path
+                    MATCH (n:Note {path: note_path})
+                    MERGE (n)-[:HAS_TAG]->(t)
+                    """,
+                    {"tags": tag_data},
+                )
 
             tx.commit()
         except Exception as e:

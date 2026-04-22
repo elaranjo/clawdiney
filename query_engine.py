@@ -1,6 +1,5 @@
 import logging
-import signal
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, TypedDict
@@ -9,6 +8,12 @@ import chromadb
 import httpx
 import ollama
 from neo4j import GraphDatabase
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from chunking import Chunk, markdown_chunking
 from config import Config
@@ -80,7 +85,14 @@ class BrainQueryEngine:
         """Exit context manager, closing all database connections."""
         self.close()
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, RuntimeError)),
+        reraise=True,
+    )
     def get_embedding(self, text: str) -> list[float]:
+        """Get embedding with exponential backoff retry."""
         response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
         return response["embedding"]
 
@@ -188,12 +200,25 @@ class BrainQueryEngine:
     def get_related_notes(self, note_ref: str) -> list[str]:
         """
         Fetches notes that are linked to the given note in Neo4j, including tag-based relationships.
+
+        Uses the optimized schema:
+        - (:Note)-[:LINKS_TO]->(:Note) for wikilinks
+        - (:Note)-[:HAS_TAG]->(:Tag) for tags (avoids O(n²) cartesian join)
         """
         with self.neo4j_driver.session() as session:
             query = """
-            MATCH (n:Note)-[:LINKS_TO|SHARES_TAG]-(related:Note)
+            MATCH (n:Note)-[:LINKS_TO]-(related:Note)
             WHERE n.path = $note_ref OR n.name = $note_ref
-            RETURN related.name as name, related.path as path
+            WITH collect(related) AS linked_notes
+
+            MATCH (n:Note)-[:HAS_TAG]->(t:Tag)<-[:HAS_TAG]-(related:Note)
+            WHERE n.path = $note_ref OR n.name = $note_ref
+            WITH linked_notes, collect(DISTINCT related) AS tag_related
+
+            // Combine and deduplicate
+            WITH linked_notes + tag_related AS all_related
+            UNWIND all_related AS related
+            RETURN DISTINCT related.name AS name, related.path AS path
             """
             result = session.run(query, note_ref=note_ref)
             return [record["path"] or record["name"] for record in result]
@@ -252,19 +277,31 @@ class BrainQueryEngine:
                     for doc, meta in results
                 }
 
-                # Wait for all futures with global timeout
-                def timeout_handler(signum, frame):
-                    raise FuturesTimeoutError(f"Rerank exceeded {timeout}s timeout")
+                # Wait for all futures with global timeout using thread-safe approach
+                # This avoids signal.SIGALRM which is Unix-only and not thread-safe
+                pending_futures = set(futures.keys())
 
-                # Set alarm for timeout
-                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(timeout)
+                while pending_futures:
+                    # Wait for next future to complete or timeout
+                    completed, pending_futures = wait(
+                        pending_futures, timeout=timeout, return_when=FIRST_COMPLETED
+                    )
 
-                try:
-                    for future in futures:
+                    if not completed and pending_futures:
+                        # Timeout reached, mark remaining as timed out
+                        logger.warning(
+                            "Rerank timeout reached, some documents not scored"
+                        )
+                        for future in pending_futures:
+                            doc, meta = futures[future]
+                            scored_results.append((None, doc, meta))
+                        break
+
+                    # Process completed futures
+                    for future in completed:
                         doc, meta = futures[future]
                         try:
-                            score = future.result(timeout=timeout)
+                            score = future.result(timeout=0)
                             if score is not None:
                                 successful_scores += 1
                             scored_results.append((score, doc, meta))
@@ -275,15 +312,6 @@ class BrainQueryEngine:
                             logger.warning(f"Error scoring document: {e}")
                             scored_results.append((None, doc, meta))
 
-                    signal.alarm(0)  # Cancel alarm
-                finally:
-                    signal.signal(signal.SIGALRM, old_handler)
-
-        except FuturesTimeoutError:
-            logger.error(
-                f"Rerank operation exceeded {timeout}s timeout, using fallback"
-            )
-            return results
         except Exception as e:
             logger.error(f"Rerank failed: {e}, using fallback")
             return results

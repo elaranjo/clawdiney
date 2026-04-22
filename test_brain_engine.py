@@ -26,13 +26,18 @@ class TestConfig(unittest.TestCase):
             os.environ.pop("CHROMA_PORT", None)
 
     def test_http_chroma_config(self):
+        import importlib
+
         os.environ["CHROMA_HOST"] = "test-host"
         os.environ["CHROMA_PORT"] = "8080"
 
-        from config import Config
+        # Force reload to pick up new environment variables
+        import config as config_module
+        importlib.reload(config_module)
 
         self.assertEqual(
-            Config.get_chroma_client_config(), {"host": "test-host", "port": 8080}
+            config_module.Config.get_chroma_client_config(),
+            {"host": "test-host", "port": 8080},
         )
 
 

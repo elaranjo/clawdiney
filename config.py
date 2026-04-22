@@ -72,12 +72,21 @@ class Config:
 
     @staticmethod
     def _validate_password_strength(password: str) -> None:
-        """Validate Neo4j password strength."""
-        if len(password) < 8:
+        """Validate Neo4j password strength with complexity requirements."""
+        import re
+
+        if len(password) < 12:
+            raise ValueError("Neo4j password must be at least 12 characters long.")
+        if not re.search(r"[A-Z]", password):
             raise ValueError(
-                "Neo4j password must be at least 8 characters long. "
-                "Consider using a stronger password (12+ chars recommended)."
+                "Neo4j password must contain at least one uppercase letter."
             )
+        if not re.search(r"[a-z]", password):
+            raise ValueError(
+                "Neo4j password must contain at least one lowercase letter."
+            )
+        if not re.search(r"\d", password):
+            raise ValueError("Neo4j password must contain at least one digit.")
 
     @classmethod
     def get_neo4j_password(cls) -> str | None:

@@ -87,7 +87,11 @@ def search_brain(query: str) -> str:
 def explore_graph(note_name: str) -> str:
     """
     Explore the knowledge graph to find notes related to a specific topic.
-    Returns a list of connected notes based on [[WikiLinks]].
+    Returns a list of connected notes via:
+    - Direct wikilinks: (:Note)-[:LINKS_TO]->(:Note)
+    - Shared tags: (:Note)-[:HAS_TAG]->(:Tag)<-[:HAS_TAG]-(:Note)
+
+    The tag-based approach scales O(n) instead of O(n²) for large vaults.
     """
     try:
         engine = get_engine()
