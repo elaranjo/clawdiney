@@ -1,9 +1,13 @@
+import logging
 import os
 import threading
-from functools import lru_cache
 
-from query_engine import BrainQueryEngine
 from mcp.server.fastmcp import FastMCP
+
+from logging_config import setup_logging
+from query_engine import BrainQueryEngine
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP Server
 mcp = FastMCP("Clawdiney", port=8006, host="0.0.0.0")
@@ -64,8 +68,10 @@ def search_brain(query: str) -> str:
     """
     try:
         engine = get_engine()
+        logger.info(f"Search query: {query[:50]}..." if len(query) > 50 else f"Search query: {query}")
         return f"Brain Search Results for '{query}':\n\n{engine.query(query)}"
     except Exception as e:
+        logger.error(f"search_brain failed: {e}")
         return f"Error in search_brain: {str(e)}"
 
 @mcp.tool()
@@ -76,11 +82,15 @@ def explore_graph(note_name: str) -> str:
     """
     try:
         engine = get_engine()
+        logger.info(f"Explore graph: {note_name}")
         related = engine.get_related_notes(note_name)
         if not related:
+            logger.info(f"No connections found for: {note_name}")
             return f"No direct connections found for note: {note_name}"
+        logger.info(f"Found {len(related)} related notes for: {note_name}")
         return f"Notes connected to {note_name}:\n" + "\n".join([f"- {r}" for r in related])
     except Exception as e:
+        logger.error(f"explore_graph failed: {e}")
         return f"Error in explore_graph: {str(e)}"
 
 @mcp.tool()
@@ -91,8 +101,10 @@ def resolve_note(name: str) -> str:
     """
     try:
         engine = get_engine()
+        logger.info(f"Resolve note: {name}")
         return _format_candidates(name, engine.resolve_note(name))
     except Exception as e:
+        logger.error(f"resolve_note failed: {e}")
         return f"Error in resolve_note: {str(e)}"
 
 
@@ -104,16 +116,20 @@ def get_note_chunks(filename: str) -> str:
     """
     try:
         engine = get_engine()
+        logger.info(f"Get chunks: {filename}")
         return _format_chunks(engine.get_note_chunks(filename))
     except Exception as e:
+        logger.error(f"get_note_chunks failed: {e}")
         return f"Error in get_note_chunks: {str(e)}"
 
 if __name__ == "__main__":
+    setup_logging()
     try:
         transport = os.environ.get("MCP_TRANSPORT", "stdio")
         mount_path = os.environ.get("MCP_MOUNT_PATH")
+        logger.info(f"Starting MCP server with transport={transport}")
         mcp.run(transport=transport, mount_path=mount_path)
     finally:
         # Clean up resources
-        if engine is not None:
-            engine.close()
+        if _engine_instance is not None:
+            _engine_instance.close()

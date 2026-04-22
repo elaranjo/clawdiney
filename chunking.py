@@ -5,11 +5,21 @@ This module provides text chunking strategies used by both the indexer
 and query engine for consistent text segmentation.
 """
 import re
+from typing import TypedDict
 
 from config import Config
 
 
-def fixed_size_chunking(text, chunk_size=500, overlap=50):
+class Chunk(TypedDict):
+    """Represents a text chunk with header and content."""
+
+    header: str
+    content: str
+
+
+def fixed_size_chunking(
+    text: str, chunk_size: int = 500, overlap: int = 50
+) -> list[Chunk]:
     """
     Split text into fixed-size chunks with overlap.
 
@@ -21,19 +31,19 @@ def fixed_size_chunking(text, chunk_size=500, overlap=50):
     Returns:
         List of dicts with 'header' and 'content' keys
     """
-    chunks = []
+    chunks: list[Chunk] = []
     start = 0
 
     while start < len(text):
         end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append({"header": "Fixed Size", "content": chunk.strip()})
+        chunk_text = text[start:end]
+        chunks.append({"header": "Fixed Size", "content": chunk_text.strip()})
         start = end - overlap if overlap < chunk_size else end
 
     return [chunk for chunk in chunks if chunk["content"]]
 
 
-def semantic_chunking(text, chunk_size=None):
+def semantic_chunking(text: str, chunk_size: int | None = None) -> list[Chunk]:
     """
     Split text at sentence boundaries, grouping into target-size chunks.
 
@@ -45,7 +55,7 @@ def semantic_chunking(text, chunk_size=None):
         List of dicts with 'header' and 'content' keys
     """
     sentences = re.split(r"(?<=[.!?])\s+", text)
-    chunks = []
+    chunks: list[Chunk] = []
     current_chunk = ""
     target_size = chunk_size or Config.CHUNK_SIZE
 
@@ -62,7 +72,7 @@ def semantic_chunking(text, chunk_size=None):
     return chunks
 
 
-def markdown_chunking(text):
+def markdown_chunking(text: str) -> list[Chunk]:
     """
     Split text by markdown headers (# Header).
 
@@ -72,9 +82,9 @@ def markdown_chunking(text):
     Returns:
         List of dicts with 'header' and 'content' keys
     """
-    chunks = []
+    chunks: list[Chunk] = []
     current_header = "Root"
-    current_lines = []
+    current_lines: list[str] = []
 
     for line in text.splitlines():
         if re.match(r"^#+\s", line):
@@ -100,7 +110,12 @@ def markdown_chunking(text):
     return [chunk for chunk in chunks if chunk["content"] or chunk["header"] != "Root"]
 
 
-def chunk_text(text, strategy=None, chunk_size=None, overlap=None):
+def chunk_text(
+    text: str,
+    strategy: str | None = None,
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+) -> list[Chunk]:
     """
     Split text using the configured strategy.
 

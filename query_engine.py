@@ -1,16 +1,37 @@
-from pathlib import Path
-import re
 import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from pathlib import Path
+from typing import Any, TypedDict
 
 import chromadb
+import httpx
 import ollama
 from neo4j import GraphDatabase
 
+from chunking import Chunk, markdown_chunking
 from config import Config
-from chunking import markdown_chunking
+from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+class Candidate(TypedDict):
+    """Represents a note candidate with path and relevance score."""
+
+    path: str
+    filename: str
+    score: int
+
+
+class Note(TypedDict):
+    """Represents a resolved note with content."""
+
+    path: str
+    filename: str
+    content: str
+
 
 class BrainQueryEngine:
     def __init__(self):
@@ -22,8 +43,7 @@ class BrainQueryEngine:
             host=chroma_config["host"],
             port=chroma_config["port"]
         )
-        # Configura timeout para 60 segundos no cliente httpx subjacente
-        import httpx
+        # Configura timeout para 300 segundos no cliente httpx subjacente
         self.chroma_client.timeout = httpx.Timeout(300.0)
         self.vector_collection = self.chroma_client.get_collection(name="obsidian_vault")
 
@@ -33,17 +53,17 @@ class BrainQueryEngine:
             auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD)
         )
 
-    def close(self):
+    def close(self) -> None:
         """Close all database connections (Neo4j + ChromaDB)."""
         self.neo4j_driver.close()
         if hasattr(self.chroma_client, 'close'):
             self.chroma_client.close()
 
-    def get_embedding(self, text):
+    def get_embedding(self, text: str) -> list[float]:
         response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
         return response['embedding']
 
-    def _normalize_note_path(self, note_path):
+    def _normalize_note_path(self, note_path: str) -> str:
         """Return a canonical vault-relative path and ensure it stays inside the vault."""
         raw_path = Path(note_path).expanduser()
         if raw_path.is_absolute():
@@ -56,31 +76,31 @@ class BrainQueryEngine:
         except ValueError as exc:
             raise ValueError(f"Path '{note_path}' is outside the configured vault") from exc
 
-    def _resolve_note_path(self, note_path):
+    def _resolve_note_path(self, note_path: str) -> tuple[Path, str]:
         relative_path = self._normalize_note_path(note_path)
         absolute_path = self.vault_root / relative_path
         if not absolute_path.is_file():
             raise FileNotFoundError(f"Note not found: {relative_path}")
         return absolute_path, relative_path
 
-    def _split_note_into_chunks(self, content):
+    def _split_note_into_chunks(self, content: str) -> list[Chunk]:
         """Split markdown text by headers for local note inspection."""
         return markdown_chunking(content)
 
-    def resolve_note(self, name):
+    def resolve_note(self, name: str) -> list[Candidate]:
         """Return candidate notes that match a basename or relative path fragment."""
         query = name.strip().lower()
         if not query:
             return []
 
-        candidates = []
+        candidates: list[Candidate] = []
         for file_path in self.vault_root.rglob("*.md"):
             relative_path = file_path.relative_to(self.vault_root).as_posix()
             filename = file_path.name
             filename_lower = filename.lower()
             relative_lower = relative_path.lower()
 
-            score = None
+            score: int | None = None
             if filename_lower == query or relative_lower == query:
                 score = 0
             elif relative_lower.endswith(f"/{query}"):
@@ -104,7 +124,7 @@ class BrainQueryEngine:
         candidates.sort(key=lambda item: (item["score"], item["path"]))
         return candidates
 
-    def get_note_by_path(self, path):
+    def get_note_by_path(self, path: str) -> Note:
         absolute_path, relative_path = self._resolve_note_path(path)
         return {
             "path": relative_path,
@@ -112,10 +132,10 @@ class BrainQueryEngine:
             "content": absolute_path.read_text(encoding="utf-8"),
         }
 
-    def read_source(self, source_path):
+    def read_source(self, source_path: str) -> str:
         return self.get_note_by_path(source_path)["content"]
 
-    def get_note_chunks(self, filename):
+    def get_note_chunks(self, filename: str) -> list[dict[str, Any]]:
         candidates = self.resolve_note(filename)
         if not candidates:
             raise FileNotFoundError(f"No notes found for '{filename}'")
@@ -138,7 +158,7 @@ class BrainQueryEngine:
             for index, chunk in enumerate(chunks)
         ]
 
-    def get_related_notes(self, note_ref):
+    def get_related_notes(self, note_ref: str) -> list[str]:
         """
         Fetches notes that are linked to the given note in Neo4j, including tag-based relationships.
         """
@@ -151,7 +171,7 @@ class BrainQueryEngine:
             result = session.run(query, note_ref=note_ref)
             return [record["path"] or record["name"] for record in result]
 
-    def _score_single_doc(self, query, doc):
+    def _score_single_doc(self, query: str, doc: str) -> float | None:
         """Score a single document against query. Returns score or None."""
         combined = f"Output only the relevance score between 0 and 1. Query: {query}\nDocument: {doc}"
         try:
@@ -173,7 +193,13 @@ class BrainQueryEngine:
             logger.warning(f"Rerank model error: {e}")
             return None
 
-    def rerank_results(self, query, results, timeout=30, batch_size=5):
+    def rerank_results(
+        self,
+        query: str,
+        results: list[tuple[str, dict[str, Any]]],
+        timeout: int = 30,
+        batch_size: int = 5,
+    ) -> list[tuple[str, dict[str, Any]]]:
         """
         Rerank results using cross-encoder model with timeout and batch processing.
 
@@ -200,8 +226,6 @@ class BrainQueryEngine:
                 }
 
                 # Wait for all futures with global timeout
-                import signal
-
                 def timeout_handler(signum, frame):
                     raise FuturesTimeoutError(f"Rerank exceeded {timeout}s timeout")
 
@@ -255,9 +279,24 @@ class BrainQueryEngine:
         filtered_results.sort(key=lambda x: x[0], reverse=True)
         return [(doc, meta) for score, doc, meta in filtered_results]
 
-    def query(self, text, n_results=3, expand_graph=True, use_rerank=True):
+    def query(
+        self,
+        text: str,
+        n_results: int = 3,
+        expand_graph: bool = True,
+        use_rerank: bool = True,
+    ) -> str:
         """
         Hybrid Semantic + Graph search.
+
+        Args:
+            text: Search query string
+            n_results: Number of results to return (default: 3)
+            expand_graph: Whether to include related notes via graph (default: True)
+            use_rerank: Whether to apply reranking (default: True)
+
+        Returns:
+            Formatted context briefing with source documents and related notes
         """
         # 1. Semantic Search
         embedding = self.get_embedding(text)
@@ -301,14 +340,17 @@ class BrainQueryEngine:
 
 if __name__ == "__main__":
     import sys
+    setup_logging()
+
     if len(sys.argv) < 2:
-        print("Usage: python brain_query_engine.py 'your search query'")
+        logger.error("Usage: python query_engine.py 'your search query'")
         sys.exit(1)
 
     query_text = " ".join(sys.argv[1:])
     engine = BrainQueryEngine()
     try:
         briefing = engine.query(query_text)
+        logger.info("Query completed successfully")
         print(f"\n=== BRAIN CONTEXT BRIEFING ===\n\n{briefing}\n\n==============================")
     finally:
         engine.close()

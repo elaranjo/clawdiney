@@ -1,18 +1,22 @@
 import os
+from typing import Any
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
 
-def _get_bool(name, default=False):
+def _get_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _require_env(name, description=None, allow_test_mode=True):
+def _require_env(
+    name: str, description: str | None = None, allow_test_mode: bool = True
+) -> str | None:
     """
     Require an environment variable, raising ValueError if not set.
 
@@ -56,7 +60,7 @@ class Config:
     NEO4J_PASSWORD = _require_env("NEO4J_PASSWORD", "Neo4j password")
 
     @classmethod
-    def get_chroma_client_config(cls):
+    def get_chroma_client_config(cls) -> dict[str, Any]:
         """Returns configuration for ChromaDB HTTP client"""
         return {
             "host": cls.CHROMA_HOST,

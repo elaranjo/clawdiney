@@ -1,0 +1,7 @@
+[lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]  # Line length (deixar para o formatador)
+exclude = ["venv/", "__pycache__/", ".git/"]
+
+[format]
+exclude = ["venv/", "__pycache__/", ".git/"]
