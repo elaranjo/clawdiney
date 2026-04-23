@@ -13,7 +13,6 @@ import chromadb
 from neo4j import GraphDatabase
 
 from .incremental_indexer import IncrementalIndexer
-from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

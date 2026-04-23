@@ -31,12 +31,12 @@ def _perform_auto_sync() -> None:
     global _auto_sync_started
 
     try:
+        from .incremental_indexer import incremental_sync
         from .indexer import (
             create_chroma_client,
             create_collection,
             create_neo4j_driver,
         )
-        from .incremental_indexer import incremental_sync
 
         vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
         logger.info(f"Checking for vault changes in: {vault_root}")

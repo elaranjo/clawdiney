@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
 from brain_indexer import (
     build_note_record,
     chunk_text,

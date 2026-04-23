@@ -16,12 +16,12 @@ from typing import Any
 import chromadb
 from neo4j import GraphDatabase
 
+from .config import Config
 from .indexer import (
     build_note_record,
     discover_vault_files,
     sync_graph,
 )
-from .config import Config
 
 logger = logging.getLogger(__name__)
 

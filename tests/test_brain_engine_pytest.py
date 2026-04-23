@@ -1,7 +1,6 @@
 import os
 
 import pytest
-
 from query_engine import BrainQueryEngine
 
 pytestmark = pytest.mark.skipif(
