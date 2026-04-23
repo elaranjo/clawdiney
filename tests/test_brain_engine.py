@@ -139,7 +139,8 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         ]
 
         with patch(
-            "clawdiney.query_engine.ollama.generate", side_effect=RuntimeError("missing model")
+            "clawdiney.query_engine.ollama.generate",
+            side_effect=RuntimeError("missing model"),
         ):
             reranked = self.engine.rerank_results("design", results)
 

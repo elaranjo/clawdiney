@@ -219,6 +219,7 @@ def health_check() -> str:
     # Check ChromaDB
     try:
         from .indexer import create_chroma_client, create_collection
+
         client = create_chroma_client()
         collection = create_collection(client)
         count = collection.count()
@@ -230,6 +231,7 @@ def health_check() -> str:
     # Check Neo4j
     try:
         from .indexer import create_neo4j_driver
+
         driver = create_neo4j_driver()
         with driver.session() as session:
             result = session.run("MATCH (n) RETURN count(n) as count")
@@ -243,6 +245,7 @@ def health_check() -> str:
     # Check Ollama
     try:
         import ollama
+
         client = ollama.Client()
         models = client.list()
         model_count = len(models.get("models", []))
@@ -425,8 +428,12 @@ if __name__ == "__main__":
             _engine_instance.close()
         # Cleanup writer singleton
         from vault_writer import _writer_instance
+
         if _writer_instance is not None:
-            if hasattr(_writer_instance, "_neo4j_driver") and _writer_instance._neo4j_driver:
+            if (
+                hasattr(_writer_instance, "_neo4j_driver")
+                and _writer_instance._neo4j_driver
+            ):
                 _writer_instance._neo4j_driver.close()
         sys.exit(0)
 

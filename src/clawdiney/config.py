@@ -69,6 +69,7 @@ class Config:
 
         try:
             import ollama
+
             client = ollama.Client()
             available_models = client.list()
             model_names = [m["name"] for m in available_models.get("models", [])]

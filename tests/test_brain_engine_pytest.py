@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from query_engine import BrainQueryEngine
+from clawdiney.query_engine import BrainQueryEngine
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_BRAIN_INTEGRATION") != "1",

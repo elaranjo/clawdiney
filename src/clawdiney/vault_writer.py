@@ -78,7 +78,9 @@ class VaultWriter:
         try:
             absolute_path.relative_to(self.vault_root)
         except ValueError:
-            raise ValueError(f"Path outside vault after resolution: {path} -> {absolute_path}")
+            raise ValueError(
+                f"Path outside vault after resolution: {path} -> {absolute_path}"
+            )
 
         return absolute_path
 
@@ -100,9 +102,7 @@ class VaultWriter:
             Path(temp_path).unlink(missing_ok=True)
             raise
 
-    def write_note(
-        self, path: str, content: str, mode: str = "create"
-    ) -> WriteResult:
+    def write_note(self, path: str, content: str, mode: str = "create") -> WriteResult:
         """
         Create or update a note in the vault.
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from brain_indexer import (
+from clawdiney.indexer import (
     build_note_record,
     chunk_text,
     extract_wikilinks,
