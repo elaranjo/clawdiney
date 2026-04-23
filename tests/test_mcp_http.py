@@ -5,8 +5,8 @@ import asyncio
 import json
 import os
 
-import pytest
 import httpx
+import pytest
 
 # Skip these tests in CI - they require a running MCP server
 pytestmark = pytest.mark.skipif(
