@@ -8,6 +8,8 @@ State is persisted to .clawdiney_state.json in the vault root.
 import hashlib
 import json
 import logging
+import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 STATE_FILE = ".clawdiney_state.json"
+STATE_SCHEMA_VERSION = 1
 
 
 class IncrementalIndexer:
@@ -32,7 +35,11 @@ class IncrementalIndexer:
     def __init__(self, vault_root: Path):
         self.vault_root = vault_root
         self.state_path = vault_root / STATE_FILE
-        self.state: dict[str, Any] = {"files": {}, "last_full_sync": None}
+        self.state: dict[str, Any] = {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "files": {},
+            "last_full_sync": None,
+        }
         self._load_state()
 
     def _load_state(self) -> None:
@@ -40,18 +47,69 @@ class IncrementalIndexer:
         if self.state_path.exists():
             try:
                 with open(self.state_path, encoding="utf-8") as f:
-                    self.state = json.load(f)
-                logger.info(f"Loaded state from {self.state_path}")
+                    loaded = json.load(f)
+
+                # Handle schema versioning
+                version = loaded.get("schema_version", 1)
+                if version > STATE_SCHEMA_VERSION:
+                    logger.warning(
+                        f"State file has newer schema version {version} "
+                        f"(this version supports up to {STATE_SCHEMA_VERSION}). "
+                        f"Attempting to load anyway."
+                    )
+                elif version < STATE_SCHEMA_VERSION:
+                    logger.info(
+                        f"Upgrading state schema from v{version} to v{STATE_SCHEMA_VERSION}"
+                    )
+                    loaded = self._upgrade_state(loaded, version)
+
+                self.state = loaded
+                logger.info(f"Loaded state from {self.state_path} (schema v{version})")
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to load state: {e}. Starting fresh.")
         else:
             logger.info("No existing state found. Will perform full sync.")
 
     def _save_state(self) -> None:
-        """Persist state to disk."""
-        with open(self.state_path, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2)
-        logger.debug(f"Saved state to {self.state_path}")
+        """Persist state to disk atomically using temp file + rename."""
+        # Ensure schema version is always set
+        self.state["schema_version"] = STATE_SCHEMA_VERSION
+
+        # Write to temp file first for atomicity
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(
+            suffix=".tmp", dir=self.state_path.parent, prefix=".state_"
+        )
+        try:
+            with open(fd, "w", encoding="utf-8") as f:
+                json.dump(self.state, f, indent=2)
+            # Atomic rename
+            Path(temp_path).replace(self.state_path)
+            logger.debug(f"Saved state atomically to {self.state_path}")
+        except Exception as e:
+            logger.error(f"Failed to save state: {e}")
+            # Cleanup temp file on failure
+            Path(temp_path).unlink(missing_ok=True)
+            raise
+
+    def _upgrade_state(
+        self, state: dict[str, Any], from_version: int
+    ) -> dict[str, Any]:
+        """Upgrade state schema from older version to current."""
+        upgraded = state.copy()
+
+        # v1 -> v2: (future upgrades go here)
+        # Example:
+        # if from_version < 2:
+        #     upgraded["new_field"] = "default"
+
+        # For now, just ensure base fields exist
+        if "files" not in upgraded:
+            upgraded["files"] = {}
+        if "last_full_sync" not in upgraded:
+            upgraded["last_full_sync"] = None
+
+        return upgraded
 
     def _compute_file_hash(self, file_path: Path) -> str:
         """Compute SHA-256 hash of a file."""
@@ -132,8 +190,8 @@ class IncrementalIndexer:
             if ids:
                 collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
-            # Sync to Neo4j (single note)
-            sync_graph(neo4j_driver, [note_record])
+            # Sync to Neo4j (single note, incremental mode)
+            sync_graph(neo4j_driver, [note_record], incremental=True)
 
             # Update state
             file_hash = self._compute_file_hash(file_path)
@@ -249,7 +307,7 @@ def incremental_sync(
     if is_full_sync:
         all_files = indexer._get_all_vault_files()
         indexer.mark_all_synced(all_files)
-        indexer.state["last_full_sync"] = str(Path.now().isoformat())
+        indexer.state["last_full_sync"] = datetime.now().isoformat()
 
     indexer._save_state()
 

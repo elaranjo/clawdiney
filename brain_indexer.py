@@ -141,7 +141,9 @@ def index_note_records(
     return indexed_chunks
 
 
-def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
+def sync_graph(
+    neo4j_driver: Any, note_records: list[NoteRecord], incremental: bool = False
+) -> None:
     """
     Sync notes to Neo4j graph with transactional guarantees.
     Uses pre-extracted wikilinks for O(n) link creation and Tag nodes for O(n) tag relationships.
@@ -149,6 +151,12 @@ def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
     Schema:
     - (:Note)-[:LINKS_TO]->(:Note)  # WikiLinks entre notas
     - (:Note)-[:HAS_TAG]->(:Tag)    # Notas conectadas a nós Tag (O(n) ao invés de O(n²))
+
+    Args:
+        neo4j_driver: Neo4j driver instance
+        note_records: List of note records to sync
+        incremental: If True, only update relationships for the given notes (O(1) per note).
+                     If False, rebuilds all relationships (O(n) total, use for full sync).
     """
     with neo4j_driver.session() as session:
         tx = session.begin_transaction()
@@ -174,9 +182,25 @@ def sync_graph(neo4j_driver: Any, note_records: list[NoteRecord]) -> None:
                 ],
             )
 
-            # 2. Delete old relationships and orphan Tag nodes
-            tx.run("MATCH ()-[r:LINKS_TO|HAS_TAG]->() DELETE r")
-            tx.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
+            if incremental:
+                # 2a. INCREMENTAL MODE: Delete only relationships for the synced notes
+                paths = [note["path"] for note in note_records]
+                tx.run(
+                    "MATCH (n:Note) WHERE n.path IN $paths MATCH ()-[r:LINKS_TO]->(n) DELETE r",
+                    paths=paths,
+                )
+                tx.run(
+                    "MATCH (n:Note) WHERE n.path IN $paths MATCH (n)-[r:LINKS_TO]->() DELETE r",
+                    paths=paths,
+                )
+                tx.run(
+                    "MATCH (n:Note) WHERE n.path IN $paths MATCH (n)-[r:HAS_TAG]->() DELETE r",
+                    paths=paths,
+                )
+            else:
+                # 2b. FULL SYNC MODE: Delete all relationships and orphan Tag nodes
+                tx.run("MATCH ()-[r:LINKS_TO|HAS_TAG]->() DELETE r")
+                tx.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
 
             # 3. Create LINKS_TO relationships using pre-extracted wikilinks (O(n))
             links_data = []

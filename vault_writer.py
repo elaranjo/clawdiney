@@ -61,6 +61,9 @@ class VaultWriter:
         """
         Validate and resolve vault-relative path.
 
+        Security: Resolves symlinks and verifies final path is inside vault.
+        Prevents symlink attacks where a symlink inside vault points outside.
+
         Raises ValueError if path is outside vault or invalid.
         """
         if not path:
@@ -69,14 +72,14 @@ class VaultWriter:
         if path.startswith("/") or path.startswith(".."):
             raise ValueError(f"Path must be vault-relative: {path}")
 
-        # Resolve to absolute path
+        # Resolve to absolute path (follows symlinks)
         absolute_path = (self.vault_root / path).resolve()
 
-        # Ensure it's inside vault
+        # Security: Ensure resolved path is inside vault (prevents symlink attacks)
         try:
             absolute_path.relative_to(self.vault_root)
         except ValueError:
-            raise ValueError(f"Path outside vault: {path}")
+            raise ValueError(f"Path outside vault after resolution: {path} -> {absolute_path}")
 
         return absolute_path
 
