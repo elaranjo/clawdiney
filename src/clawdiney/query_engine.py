@@ -25,6 +25,8 @@ from .constants import (
     SEARCH_USE_RERANK_DEFAULT,
 )
 from .logging_config import setup_logging
+from .query_cache import QueryCache
+from .rag_optimizer import MMRReranker, QueryPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +68,22 @@ class BrainQueryEngine:
             auth=(Config.NEO4J_USER, Config.get_neo4j_password()),
         )
 
+        # Query Cache Setup (Redis)
+        self.cache = QueryCache() if Config.ENABLE_QUERY_CACHE else None
+
+        # RAG Optimizers
+        self.query_preprocessor = QueryPreprocessor(
+            expand_abbreviations=True, remove_stop_words=False
+        )
+        self.mmr_reranker = MMRReranker(lambda_param=0.7)
+
     def close(self) -> None:
-        """Close all database connections (Neo4j + ChromaDB)."""
+        """Close all database connections (Neo4j + ChromaDB + Redis)."""
         self.neo4j_driver.close()
         if hasattr(self.chroma_client, "close"):
             self.chroma_client.close()
+        if self.cache:
+            self.cache.close()
 
     def __enter__(self) -> "BrainQueryEngine":
         """Enter context manager, returning the engine instance."""
@@ -267,8 +280,40 @@ class BrainQueryEngine:
         if not results:
             return results
 
-        scored_results = []
-        successful_scores = 0
+        # Score documents in parallel
+        scored_results, successful_scores = self._score_documents_parallel(
+            query, results, timeout, batch_size
+        )
+
+        # Fallback if no scores were successful
+        if successful_scores == 0:
+            logger.info("No successful rerank scores, falling back to original ranking")
+            return results
+
+        # Filter and sort results
+        return self._filter_and_sort_results(scored_results, results)
+
+    def _score_documents_parallel(
+        self,
+        query: str,
+        results: list[tuple[str, dict[str, Any]]],
+        timeout: int,
+        batch_size: int,
+    ) -> tuple[list[tuple[float | None, str, dict[str, Any]]], int]:
+        """
+        Score documents in parallel using ThreadPoolExecutor.
+
+        Args:
+            query: Search query string
+            results: List of (document, metadata) tuples
+            timeout: Maximum seconds for entire operation
+            batch_size: Number of concurrent workers
+
+        Returns:
+            Tuple of (scored_results, successful_scores_count)
+        """
+        scored_results: list[tuple[float | None, str, dict[str, Any]]] = []
+        successful_scores = [0]  # Use list for mutability
 
         try:
             with ThreadPoolExecutor(max_workers=batch_size) as executor:
@@ -277,51 +322,75 @@ class BrainQueryEngine:
                     for doc, meta in results
                 }
 
-                # Wait for all futures with global timeout using thread-safe approach
-                # This avoids signal.SIGALRM which is Unix-only and not thread-safe
-                pending_futures = set(futures.keys())
-
-                while pending_futures:
-                    # Wait for next future to complete or timeout
-                    completed, pending_futures = wait(
-                        pending_futures, timeout=timeout, return_when=FIRST_COMPLETED
-                    )
-
-                    if not completed and pending_futures:
-                        # Timeout reached, mark remaining as timed out
-                        logger.warning(
-                            "Rerank timeout reached, some documents not scored"
-                        )
-                        for future in pending_futures:
-                            doc, meta = futures[future]
-                            scored_results.append((None, doc, meta))
-                        break
-
-                    # Process completed futures
-                    for future in completed:
-                        doc, meta = futures[future]
-                        try:
-                            score = future.result(timeout=0)
-                            if score is not None:
-                                successful_scores += 1
-                            scored_results.append((score, doc, meta))
-                        except FuturesTimeoutError:
-                            logger.warning("Document scoring timed out")
-                            scored_results.append((None, doc, meta))
-                        except Exception as e:
-                            logger.warning(f"Error scoring document: {e}")
-                            scored_results.append((None, doc, meta))
+                self._process_futures(
+                    futures, timeout, scored_results, successful_scores
+                )
 
         except Exception as e:
             logger.error(f"Rerank failed: {e}, using fallback")
-            return results
+            return [], 0
 
-        # Fallback if no scores were successful
-        if successful_scores == 0:
-            logger.info("No successful rerank scores, falling back to original ranking")
-            return results
+        return scored_results, successful_scores[0]
 
-        # Filter by threshold
+    def _process_futures(
+        self,
+        futures: dict,
+        timeout: int,
+        scored_results: list[tuple[float | None, str, dict[str, Any]]],
+        successful_scores: list[int],
+    ) -> None:
+        """
+        Process futures with timeout handling.
+
+        Args:
+            futures: Dict mapping futures to (doc, meta) tuples
+            timeout: Maximum seconds to wait
+            scored_results: List to append results to (modified in place)
+            successful_scores: List with single int counter (modified in place)
+        """
+        pending_futures = set(futures.keys())
+
+        while pending_futures:
+            completed, pending_futures = wait(
+                pending_futures, timeout=timeout, return_when=FIRST_COMPLETED
+            )
+
+            if not completed and pending_futures:
+                logger.warning("Rerank timeout reached, some documents not scored")
+                for future in pending_futures:
+                    doc, meta = futures[future]
+                    scored_results.append((None, doc, meta))
+                break
+
+            for future in completed:
+                doc, meta = futures[future]
+                try:
+                    score = future.result(timeout=0)
+                    if score is not None:
+                        successful_scores[0] += 1
+                    scored_results.append((score, doc, meta))
+                except FuturesTimeoutError:
+                    logger.warning("Document scoring timed out")
+                    scored_results.append((None, doc, meta))
+                except Exception as e:
+                    logger.warning(f"Error scoring document: {e}")
+                    scored_results.append((None, doc, meta))
+
+    def _filter_and_sort_results(
+        self,
+        scored_results: list[tuple[float | None, str, dict[str, Any]]],
+        original_results: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """
+        Filter scored results by threshold and sort by score.
+
+        Args:
+            scored_results: List of (score, doc, meta) tuples
+            original_results: Original results for fallback
+
+        Returns:
+            Filtered and sorted list of (doc, meta) tuples
+        """
         threshold = float(Config.RERANK_THRESHOLD)
         filtered_results = [
             item
@@ -334,7 +403,7 @@ class BrainQueryEngine:
             logger.info(
                 f"All results below threshold ({threshold}), returning original"
             )
-            return results
+            return original_results
 
         filtered_results.sort(key=lambda x: x[0], reverse=True)
         return [(doc, meta) for score, doc, meta in filtered_results]
@@ -345,49 +414,142 @@ class BrainQueryEngine:
         n_results: int = SEARCH_N_RESULTS_DEFAULT,
         expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
+        use_mmr: bool = False,
     ) -> str:
         """
-        Hybrid Semantic + Graph search.
+        Hybrid Semantic + Graph search with optional caching and MMR reranking.
 
         Args:
             text: Search query string
             n_results: Number of results to return (default: 3)
             expand_graph: Whether to include related notes via graph (default: True)
-            use_rerank: Whether to apply reranking (default: True)
+            use_rerank: Whether to apply LLM reranking (default: True)
+            use_mmr: Whether to apply MMR diversity reranking (default: False)
 
         Returns:
             Formatted context briefing with source documents and related notes
         """
-        # 1. Semantic Search
-        embedding = self.get_embedding(text)
+        # Check cache first
+        if self.cache:
+            cached = self.cache.get(text)
+            if cached:
+                logger.info(f"Cache hit for query: {text[:50]}...")
+                return cached["formatted_results"]
+
+        # 1. Preprocess query
+        processed_query = self.query_preprocessor.preprocess(text)
+        if processed_query != text and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
+
+        # 2. Semantic search
+        fetch_n = n_results * 3 if use_mmr else n_results
+        docs, metadatas = self._search_vectors(processed_query, fetch_n)
+
+        # 3. Deduplicate
+        docs, metadatas = self._deduplicate_results(docs, metadatas)
+
+        # 4. Apply reranking (MMR + LLM)
+        docs, metadatas = self._apply_reranking(
+            docs, metadatas, processed_query, n_results, use_mmr, use_rerank
+        )
+
+        # 5. Build context briefing
+        result = self._build_context(docs, metadatas, expand_graph)
+
+        # Cache results
+        if self.cache:
+            self.cache.set(text, {"formatted_results": result})
+
+        return result
+
+    def _search_vectors(
+        self, query: str, n_results: int
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """
+        Perform semantic search on vector store.
+
+        Args:
+            query: Preprocessed search query
+            n_results: Number of results to fetch
+
+        Returns:
+            Tuple of (documents, metadatas)
+        """
+        embedding = self.get_embedding(query)
         results = self.vector_collection.query(
             query_embeddings=[embedding], n_results=n_results
         )
+        return results["documents"][0], results["metadatas"][0]
 
-        docs = results["documents"][0]
-        metadatas = results["metadatas"][0]
+    def _apply_reranking(
+        self,
+        docs: list[str],
+        metadatas: list[dict[str, Any]],
+        query: str,
+        n_results: int,
+        use_mmr: bool,
+        use_rerank: bool,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """
+        Apply MMR and LLM reranking to search results.
 
-        # 2. Rerank results if enabled
-        if use_rerank and Config.ENABLE_RERANK and docs:
-            reranked = self.rerank_results(text, list(zip(docs, metadatas)))
+        Args:
+            docs: List of document contents
+            metadatas: List of metadata dicts
+            query: Search query string
+            n_results: Number of results to return
+            use_mmr: Whether to apply MMR diversity reranking
+            use_rerank: Whether to apply LLM reranking
+
+        Returns:
+            Tuple of (reranked_docs, reranked_metadatas)
+        """
+        if not docs:
+            return docs, metadatas
+
+        # MMR Reranking (diversity-focused)
+        if use_mmr:
+            logger.info("Applying diversity reranking...")
+            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
+
+        # LLM Reranking (relevance-focused)
+        if use_rerank and Config.ENABLE_RERANK:
+            reranked = self.rerank_results(query, list(zip(docs, metadatas)))
             if reranked:
                 docs, metadatas = zip(*reranked)
-                # Limit to n_results
-                docs = docs[:n_results]
-                metadatas = metadatas[:n_results]
+                docs = list(docs[:n_results])
+                metadatas = list(metadatas[:n_results])
 
+        return docs, metadatas
+
+    def _build_context(
+        self,
+        docs: list[str],
+        metadatas: list[dict[str, Any]],
+        expand_graph: bool,
+    ) -> str:
+        """
+        Build context briefing with source documents and optional graph expansion.
+
+        Args:
+            docs: List of document contents
+            metadatas: List of metadata dicts
+            expand_graph: Whether to include related notes via graph
+
+        Returns:
+            Formatted context briefing string
+        """
         context_briefing = []
         seen_notes = set()
 
         for doc, meta in zip(docs, metadatas):
-            note_identifier = meta.get("path") or meta["filename"]
             note_label = meta.get("path") or meta["filename"]
             context_briefing.append(f"--- Source: {note_label} ---\n{doc}")
-            seen_notes.add(note_identifier)
+            seen_notes.add(note_label)
 
-            # 3. Graph Expansion
+            # Graph Expansion
             if expand_graph:
-                related = self.get_related_notes(note_identifier)
+                related = self.get_related_notes(note_label)
                 for rel_note in related:
                     if rel_note not in seen_notes:
                         context_briefing.append(
@@ -396,6 +558,73 @@ class BrainQueryEngine:
                         seen_notes.add(rel_note)
 
         return "\n\n".join(context_briefing)
+
+    def _deduplicate_results(
+        self, docs: list[str], metadatas: list[dict[str, Any]]
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """
+        Remove duplicate results based on note path/filename.
+
+        When ChromaDB returns multiple chunks from the same note,
+        keep only the first (highest ranked) occurrence.
+
+        Args:
+            docs: List of document contents
+            metadatas: List of metadata dicts
+
+        Returns:
+            Tuple of (deduplicated_docs, deduplicated_metadatas)
+        """
+        seen_paths = set()
+        unique_docs = []
+        unique_metadatas = []
+
+        for doc, meta in zip(docs, metadatas):
+            note_path = meta.get("path") or meta["filename"]
+            if note_path not in seen_paths:
+                seen_paths.add(note_path)
+                unique_docs.append(doc)
+                unique_metadatas.append(meta)
+
+        return unique_docs, unique_metadatas
+
+    def _diversify_results(
+        self, docs: list[str], metadatas: list[dict[str, Any]], k: int
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """
+        Diversify results using a simple heuristic when MMR embeddings unavailable.
+
+        Selects results from different notes when possible, avoiding multiple
+        chunks from the same source.
+
+        Args:
+            docs: List of document contents
+            metadatas: List of metadata dicts
+            k: Number of results to return
+
+        Returns:
+            Tuple of (diversified_docs, diversified_metadatas)
+        """
+        # Group by note path
+        by_note: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for doc, meta in zip(docs, metadatas):
+            note_path = meta.get("path") or meta["filename"]
+            if note_path not in by_note:
+                by_note[note_path] = []
+            by_note[note_path].append((doc, meta))
+
+        # Take one chunk per note until we have k results
+        diversified: list[tuple[str, dict[str, Any]]] = []
+        for note_path, chunks in by_note.items():
+            if len(diversified) >= k:
+                break
+            diversified.append(chunks[0])  # Take first (highest ranked) chunk
+
+        if not diversified:
+            return [], []
+
+        docs_result, metas_result = zip(*diversified)
+        return list(docs_result), list(metas_result)
 
 
 if __name__ == "__main__":

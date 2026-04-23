@@ -1,4 +1,27 @@
 services:
+  # Redis: Cache for Query Results
+  redis:
+    image: redis:7-alpine
+    container_name: clawdiney-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - ../redis_data:/data
+    networks:
+      - brain-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
   # Neo4j: Graph Database for Knowledge Relationships
   neo4j:
     image: ${NEO4J_IMAGE:-neo4j:latest}

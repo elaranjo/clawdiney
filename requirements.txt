@@ -30,3 +30,6 @@ requests==2.32.3
 
 # File Watching (for auto-sync)
 watchdog==4.0.2
+
+# Redis (for query cache)
+redis==5.0.1

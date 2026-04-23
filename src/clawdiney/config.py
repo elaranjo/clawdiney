@@ -104,6 +104,12 @@ class Config:
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 
+    # Redis (Query Cache)
+    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+    ENABLE_QUERY_CACHE = _get_bool("ENABLE_QUERY_CACHE", True)
+
     @staticmethod
     def _validate_password_strength(password: str) -> None:
         """Validate Neo4j password strength with complexity requirements."""

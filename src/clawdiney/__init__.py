@@ -12,6 +12,8 @@ from clawdiney.config import Config
 from clawdiney.incremental_indexer import full_sync, incremental_sync
 from clawdiney.indexer import index_vault
 from clawdiney.query_engine import BrainQueryEngine
+from clawdiney.query_cache import QueryCache
+from clawdiney.rag_optimizer import MMRReranker, QueryPreprocessor
 from clawdiney.vault_writer import VaultWriter, get_writer
 
 __all__ = [
@@ -19,6 +21,9 @@ __all__ = [
     "full_sync",
     "incremental_sync",
     "BrainQueryEngine",
+    "QueryCache",
+    "MMRReranker",
+    "QueryPreprocessor",
     "VaultWriter",
     "get_writer",
     "Config",

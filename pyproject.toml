@@ -30,6 +30,7 @@ dependencies = [
     "watchdog>=3.0.0",
     "mcp>=1.0.0",
     "python-dotenv>=1.0.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
