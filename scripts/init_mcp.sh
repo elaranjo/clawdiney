@@ -64,12 +64,12 @@ WATCHER_MODE="${WATCHER_MODE:-false}"
 
 if [ "$WATCHER_MODE" = "true" ]; then
     echo "🔍 Iniciando file watcher com auto-sync..."
-    exec python /app/watch_vault.py
+    exec python -m clawdiney.scripts.watch_vault
 else
     # Indexação inicial é feita pelo MCP server (auto-sync)
     echo "ℹ️  Indexação inicial será feita pelo MCP server (auto-sync)"
     echo "💡 Dica: Use WATCHER_MODE=true para rodar o file watcher contínuo"
     echo ""
     echo "🚀 Iniciando servidor MCP..."
-    exec python /app/mcp_wrapper.py
+    exec python -m clawdiney.mcp_wrapper
 fi

@@ -8,8 +8,8 @@ and query engine for consistent text segmentation.
 import re
 from typing import TypedDict
 
-from config import Config
-from constants import CHUNK_OVERLAP_DEFAULT, CHUNK_SIZE_DEFAULT
+from .config import Config
+from .constants import CHUNK_OVERLAP_DEFAULT, CHUNK_SIZE_DEFAULT
 
 
 class Chunk(TypedDict):

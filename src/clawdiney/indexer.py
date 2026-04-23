@@ -8,10 +8,10 @@ import ollama
 from chromadb.utils.embedding_functions import EmbeddingFunction
 from neo4j import GraphDatabase
 
-from chunking import Chunk, chunk_text
-from config import Config
-from constants import CHUNK_SIZE_DEFAULT
-from logging_config import setup_logging
+from .chunking import Chunk, chunk_text
+from .config import Config
+from .constants import CHUNK_SIZE_DEFAULT
+from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

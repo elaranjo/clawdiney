@@ -5,7 +5,8 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
 echo "🚀 Clawdiney - Setup Bootstrapper"
 echo "=================================="
@@ -51,7 +52,7 @@ fi
 # 5. Start Docker containers (Neo4j + ChromaDB)
 echo ""
 echo "🐳 Starting Docker containers (Neo4j + ChromaDB)..."
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 echo "✅ Containers started"
 
 # 6. Wait for Neo4j to be ready
@@ -98,7 +99,7 @@ echo "✅ Model ready"
 echo ""
 echo "🧠 Indexing your Obsidian Vault..."
 echo "   This may take a few minutes depending on the size of your vault..."
-"$SCRIPT_DIR/venv/bin/python3" "$SCRIPT_DIR/brain_indexer.py"
+"$SCRIPT_DIR/venv/bin/python3" -m clawdiney.indexer
 echo "✅ Vault indexed!"
 
 # 11. Configure Claude Code (Optional)

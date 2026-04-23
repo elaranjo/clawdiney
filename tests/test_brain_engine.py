@@ -32,7 +32,7 @@ class TestConfig(unittest.TestCase):
         os.environ["CHROMA_PORT"] = "8080"
 
         # Force reload to pick up new environment variables
-        import config as config_module
+        import clawdiney.config as config_module
 
         importlib.reload(config_module)
 
@@ -63,7 +63,7 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         ) as file:
             file.write("# Guide\n\nUseful notes.\n")
 
-        self.config_patch = patch("query_engine.Config")
+        self.config_patch = patch("clawdiney.query_engine.Config")
         self.mock_config = self.config_patch.start()
         self.mock_config.VAULT_PATH = self.temp_dir
         self.mock_config.NEO4J_URI = "bolt://test"
@@ -77,8 +77,8 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
             "port": 8000,
         }
 
-        self.chroma_patch = patch("query_engine.chromadb.HttpClient")
-        self.neo4j_patch = patch("query_engine.GraphDatabase.driver")
+        self.chroma_patch = patch("clawdiney.query_engine.chromadb.HttpClient")
+        self.neo4j_patch = patch("clawdiney.query_engine.GraphDatabase.driver")
 
         self.mock_http_client = self.chroma_patch.start()
         self.mock_driver_factory = self.neo4j_patch.start()
@@ -91,7 +91,7 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         self.mock_driver = MagicMock()
         self.mock_driver_factory.return_value = self.mock_driver
 
-        from query_engine import BrainQueryEngine
+        from clawdiney.query_engine import BrainQueryEngine
 
         self.engine = BrainQueryEngine()
 
@@ -139,7 +139,7 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         ]
 
         with patch(
-            "query_engine.ollama.generate", side_effect=RuntimeError("missing model")
+            "clawdiney.query_engine.ollama.generate", side_effect=RuntimeError("missing model")
         ):
             reranked = self.engine.rerank_results("design", results)
 
@@ -152,7 +152,7 @@ class BrainQueryEngineUnitTest(unittest.TestCase):
         ]
 
         responses = [{"response": "0.1"}, {"response": "0.2"}]
-        with patch("query_engine.ollama.generate", side_effect=responses):
+        with patch("clawdiney.query_engine.ollama.generate", side_effect=responses):
             reranked = self.engine.rerank_results("design", results)
 
         self.assertEqual(reranked, results)
@@ -172,7 +172,7 @@ class BrainIndexerUnitTest(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
 
     def test_build_note_record_preserves_path_tags_and_chunks(self):
-        from brain_indexer import build_note_record
+        from clawdiney.indexer import build_note_record
 
         record = build_note_record(
             Path(os.path.join(self.temp_dir, "frontend", "design.md")),
@@ -186,7 +186,7 @@ class BrainIndexerUnitTest(unittest.TestCase):
         self.assertEqual(record["chunks"][1]["header"], "Tokens")
 
     def test_index_vault_uses_injected_dependencies(self):
-        from brain_indexer import index_vault
+        from clawdiney.indexer import index_vault
 
         fake_collection = MagicMock()
         fake_driver = MagicMock()
@@ -212,8 +212,8 @@ class BrainMCPServerUnitTest(unittest.TestCase):
             {"path": "frontend/design.md", "filename": "design.md", "score": 1},
         ]
 
-        with patch("brain_mcp_server.get_engine", return_value=fake_engine):
-            from brain_mcp_server import resolve_note
+        with patch("clawdiney.mcp_server.get_engine", return_value=fake_engine):
+            from clawdiney.mcp_server import resolve_note
 
             output = resolve_note("design.md")
 
@@ -240,8 +240,8 @@ class BrainMCPServerUnitTest(unittest.TestCase):
             },
         ]
 
-        with patch("brain_mcp_server.get_engine", return_value=fake_engine):
-            from brain_mcp_server import get_note_chunks
+        with patch("clawdiney.mcp_server.get_engine", return_value=fake_engine):
+            from clawdiney.mcp_server import get_note_chunks
 
             output = get_note_chunks("frontend/design.md")
 

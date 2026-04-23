@@ -26,7 +26,7 @@ def main():
     # Importar e executar o servidor MCP
     try:
         print("🔧 Importando módulo do servidor MCP...", flush=True)
-        from brain_mcp_server import mcp
+        from clawdiney.mcp_server import mcp
 
         print(f"🔌 Iniciando servidor MCP com transporte {transport}...", flush=True)
         # mount_path é opcional - apenas passar se definido

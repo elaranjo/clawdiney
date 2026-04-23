@@ -4,6 +4,8 @@
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Run the query engine using the venv in the same directory
-"$SCRIPT_DIR/venv/bin/python3" "$SCRIPT_DIR/query_engine.py" "$@"
+cd "$PROJECT_DIR"
+"$SCRIPT_DIR/venv/bin/python3" -m clawdiney.query_engine "$@"

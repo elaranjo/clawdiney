@@ -15,16 +15,16 @@ from tenacity import (
     wait_exponential,
 )
 
-from chunking import Chunk, markdown_chunking
-from config import Config
-from constants import (
+from .chunking import Chunk, markdown_chunking
+from .config import Config
+from .constants import (
     RERANK_BATCH_SIZE,
     RERANK_TIMEOUT_SECONDS,
     SEARCH_EXPAND_GRAPH_DEFAULT,
     SEARCH_N_RESULTS_DEFAULT,
     SEARCH_USE_RERANK_DEFAULT,
 )
-from logging_config import setup_logging
+from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

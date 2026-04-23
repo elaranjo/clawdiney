@@ -74,8 +74,8 @@ nano .env
 
 **Run the Bootstrapper:**
 ```bash
-chmod +x setup_brain.sh
-./setup_brain.sh
+chmod +x scripts/setup_brain.sh
+./scripts/setup_brain.sh
 ```
 
 ---
@@ -111,7 +111,7 @@ The `setup_brain.sh` script automatically executes:
         "clawdiney": {
           "command": "/home/YOUR_WORK_DIRECTORY/clawdiney/venv/bin/python3",
           "args": [
-            "/home/YOUR_WORK_DIRECTORY/clawdiney/brain_mcp_server.py"
+            "-m", "clawdiney.mcp_server"
           ]
         }
       }
@@ -147,7 +147,7 @@ For Docker deployment instructions, see [DOCKER_MCP.md](DOCKER_MCP.md).
 To start all services (Neo4j, ChromaDB and MCP Server) together:
 
 ```bash
-./run_brain.sh
+./scripts/run_brain.sh
 ```
 
 This script will:
@@ -161,7 +161,7 @@ This script will:
 To stop all services, press Ctrl+C in the terminal where `run_brain.sh` is running, or execute:
 
 ```bash
-docker compose down
+docker compose -f docker/docker-compose.yml down
 ```
 
 ### Via MCP Client (Recommended)
@@ -201,13 +201,13 @@ Full-file reading is intentionally outside the MCP workflow. The agent should us
 If MCP is not available, use the direct script:
 
 ```bash
-./ask_brain.sh "production deployment patterns"
+./scripts/ask_brain.sh "production deployment patterns"
 ```
 
 ### Via Python (For developers)
 
 ```bash
-./venv/bin/python3 query_engine.py "your query here"
+./venv/bin/python3 -m clawdiney.query_engine "your query here"
 ```
 
 ---
@@ -238,6 +238,50 @@ If MCP is not available, use the direct script:
 
 ---
 
+## 📁 Project Structure
+
+```
+clawdiney/
+├── src/clawdiney/            # Main Python package
+│   ├── __init__.py           # Package exports
+│   ├── indexer.py            # Full indexing (ChromaDB + Neo4j)
+│   ├── incremental_indexer.py # Incremental sync with state tracking
+│   ├── query_engine.py       # Hybrid search (vector + graph)
+│   ├── vault_writer.py       # Thread-safe write operations
+│   ├── mcp_server.py         # MCP server for AI agents
+│   ├── mcp_wrapper.py        # Docker MCP wrapper
+│   ├── config.py             # Configuration management
+│   ├── chunking.py           # Text chunking strategies
+│   ├── constants.py          # Application constants
+│   ├── logging_config.py     # Logging setup
+│   ├── embedding_providers.py # Embedding provider interfaces
+│   └── scripts/
+│       ├── watch_vault.py    # File watcher for real-time sync
+│       └── sync_vault.py     # Manual sync script
+│
+├── tests/                    # Test suite
+│   ├── test_brain_engine.py
+│   ├── test_integration.py
+│   └── ...
+│
+├── scripts/                  # Shell scripts
+│   ├── setup_brain.sh        # Bootstrap setup
+│   ├── run_brain.sh          # Start all services
+│   ├── ask_brain.sh          # Query from command line
+│   ├── run_tests.sh          # Run test suite
+│   └── ...
+│
+├── docker/                   # Docker configuration
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── pyproject.toml            # Python project configuration
+├── requirements.txt          # Python dependencies
+└── README.md                 # This file
+```
+
+---
+
 ## 🔄 Updating Knowledge
 
 **Good news:** Clawdiney now has **automatic sync**! No need to manually re-index.
@@ -250,22 +294,22 @@ For active development, run the file watcher that syncs changes in real-time:
 
 ```bash
 # Continuous watcher mode
-WATCHER_MODE=true ./run_brain.sh
+WATCHER_MODE=true ./scripts/run_brain.sh
 
 # Or directly
-./venv/bin/python3 watch_vault.py
+./venv/bin/python3 -m clawdiney.scripts.watch_vault
 ```
 
 ### Manual Sync (On-Demand)
 ```bash
 # Check sync status
-./venv/bin/python3 sync_vault.py --status
+./venv/bin/python3 -m clawdiney.scripts.sync_vault --status
 
 # Incremental sync (only changed files)
-./venv/bin/python3 sync_vault.py
+./venv/bin/python3 -m clawdiney.scripts.sync_vault
 
 # Full sync (reindex everything)
-./venv/bin/python3 sync_vault.py --full
+./venv/bin/python3 -m clawdiney.scripts.sync_vault --full
 ```
 
 The agent has immediate access to new/modified notes after sync completes.
@@ -283,17 +327,17 @@ The agent has immediate access to new/modified notes after sync completes.
 ## 🐛 Troubleshooting
 
 ### MCP client doesn't see the server
-- Check if the client configuration points to `brain_mcp_server.py`.
+- Check if the client configuration points to `clawdiney.mcp_server`.
 - Restart the client session.
-- Test the server manually: `./venv/bin/python3 brain_mcp_server.py`
+- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server`
 
 ### Neo4j connection error
 - Check if the container is running: `docker ps | grep neo4j`
-- If necessary, restart: `docker compose restart`
+- If necessary, restart: `docker compose -f docker/docker-compose.yml restart`
 
 ### ChromaDB connection error
-- Check logs: `docker compose logs chromadb`
-- Recreate the database (data will be lost): `rm -rf chroma_db && docker compose up -d`
+- Check logs: `docker compose -f docker/docker-compose.yml logs chromadb`
+- Recreate the database (data will be lost): `rm -rf chroma_data && docker compose -f docker/docker-compose.yml up -d`
 
 ---
 

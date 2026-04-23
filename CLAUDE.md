@@ -15,7 +15,28 @@ The system consists of three main components:
 3. **MCP Server** - Provides retrieval-first integration via Model Context Protocol
 
 Data flow:
-Obsidian Vault → `brain_indexer.py` → ChromaDB + Neo4j → `brain_mcp_server.py` → MCP client
+Obsidian Vault → `src/clawdiney/indexer.py` → ChromaDB + Neo4j → `src/clawdiney/mcp_server.py` → MCP client
+
+## Project Structure
+
+```
+clawdiney/
+├── src/clawdiney/            # Main Python package
+│   ├── indexer.py            # Full indexing (ChromaDB + Neo4j)
+│   ├── incremental_indexer.py # Incremental sync with state tracking
+│   ├── query_engine.py       # Hybrid search (vector + graph)
+│   ├── vault_writer.py       # Thread-safe write operations
+│   ├── mcp_server.py         # MCP server for AI agents
+│   ├── config.py             # Configuration management
+│   ├── chunking.py           # Text chunking strategies
+│   └── scripts/
+│       ├── watch_vault.py    # File watcher for real-time sync
+│       └── sync_vault.py     # Manual sync script
+├── tests/                    # Test suite
+├── scripts/                  # Shell scripts
+├── docker/                   # Docker configuration
+└── pyproject.toml            # Python project configuration
+```
 
 ## Common Development Commands
 
@@ -23,80 +44,81 @@ Obsidian Vault → `brain_indexer.py` → ChromaDB + Neo4j → `brain_mcp_server
 
 Start the infrastructure:
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 Index/re-index the Obsidian vault:
 ```bash
-./venv/bin/python3 brain_indexer.py
+./venv/bin/python3 -m clawdiney.indexer
 ```
 
 Start the MCP server for Claude Code integration:
 ```bash
-./venv/bin/python3 brain_mcp_server.py
+./venv/bin/python3 -m clawdiney.mcp_server
 ```
 
 Test queries from command line:
 ```bash
-./ask_brain.sh "your query here"
+./scripts/ask_brain.sh "your query here"
 ```
 
 Or directly with Python:
 ```bash
-./venv/bin/python3 query_engine.py "your query here"
+./venv/bin/python3 -m clawdiney.query_engine "your query here"
 ```
 
 ### Development Environment Setup
 
 Initial setup (installs dependencies, starts services, indexes vault):
 ```bash
-chmod +x setup_brain.sh
-./setup_brain.sh
+chmod +x scripts/setup_brain.sh
+./scripts/setup_brain.sh
 ```
 
 Manual dependency installation:
 ```bash
 python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
+./venv/bin/pip install -e .
 ```
 
 ### Testing
 
 Run a test query to verify the system is working:
 ```bash
-./venv/bin/python3 query_engine.py "test query"
+./venv/bin/python3 -m clawdiney.query_engine "test query"
 ```
 
 Run unit tests:
 ```bash
-./run_tests.sh
+./scripts/run_tests.sh
 ```
 
 Or run tests directly with pytest:
 ```bash
-python -m pytest test_brain_engine.py -v
+./venv/bin/python3 -m pytest tests/ -v
 ```
 
 Check Docker services status:
 ```bash
-docker compose ps
+docker compose -f docker/docker-compose.yml ps
 ```
 
 View logs for troubleshooting:
 ```bash
-docker compose logs neo4j
-docker compose logs chromadb
+docker compose -f docker/docker-compose.yml logs neo4j
+docker compose -f docker/docker-compose.yml logs chromadb
 ```
 
 ## Key Files and Components
 
-- `brain_mcp_server.py` - MCP server exposing retrieval and note-resolution tools
-- `query_engine.py` - Core querying logic with semantic + graph search plus canonical note resolution
-- `brain_indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j with explicit `main()`
-- `config.py` - Centralized configuration management (simplified to HTTP only)
-- `setup_brain.sh` - Automated setup script for new installations
-- `docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
-- `.env` - Configuration file for paths and connection settings (simplified)
+- `src/clawdiney/mcp_server.py` - MCP server exposing retrieval and note-resolution tools
+- `src/clawdiney/query_engine.py` - Core querying logic with semantic + graph search
+- `src/clawdiney/indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j
+- `src/clawdiney/incremental_indexer.py` - Incremental sync with SHA-256 state tracking
+- `src/clawdiney/vault_writer.py` - Thread-safe vault write operations
+- `src/clawdiney/config.py` - Centralized configuration management
+- `docker/docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
+- `.env` - Configuration file for paths and connection settings
 
 ## Integration
 
@@ -121,7 +143,7 @@ Configuration example in `~/.claude.json`:
       "mcpServers": {
         "clawdiney": {
           "command": "/path/to/clawdiney/venv/bin/python3",
-          "args": ["/path/to/clawdiney/brain_mcp_server.py"]
+          "args": ["-m", "clawdiney.mcp_server"]
         }
       }
     }
@@ -131,13 +153,20 @@ Configuration example in `~/.claude.json`:
 
 ## Recent Improvements
 
-For detailed information about recent improvements, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
+### Package Structure (v0.1.0)
+- Project reorganized as proper Python package (`src/clawdiney/`)
+- Installable with `pip install -e .`
+- All imports use relative imports within the package
 
-### Canonical File Resolution
-When multiple files match a name, `resolve_note` lists all candidates:
-```
-Multiple files found for 'design.md' (3 matches):
-- frontend/design.md
-- backend/design.md
-- mobile/design.md
-```
+### Incremental Indexing
+- State tracking with SHA-256 file hashes
+- Only re-index changed files
+- Atomic state file writes
+
+### Neo4j Performance Fix
+- `sync_graph()` now supports incremental mode
+- O(1) per-note relationship updates instead of O(n²) full rebuild
+
+### Security Enhancements
+- Path validation with symlink resolution
+- Prevents symlink traversal attacks

@@ -5,9 +5,9 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from config import Config
-from logging_config import setup_logging
-from query_engine import BrainQueryEngine
+from .config import Config
+from .logging_config import setup_logging
+from .query_engine import BrainQueryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +31,12 @@ def _perform_auto_sync() -> None:
     global _auto_sync_started
 
     try:
-        from brain_indexer import (
+        from .indexer import (
             create_chroma_client,
             create_collection,
             create_neo4j_driver,
         )
-        from incremental_indexer import incremental_sync
+        from .incremental_indexer import incremental_sync
 
         vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
         logger.info(f"Checking for vault changes in: {vault_root}")
@@ -218,7 +218,7 @@ def health_check() -> str:
 
     # Check ChromaDB
     try:
-        from brain_indexer import create_chroma_client, create_collection
+        from .indexer import create_chroma_client, create_collection
         client = create_chroma_client()
         collection = create_collection(client)
         count = collection.count()
@@ -229,7 +229,7 @@ def health_check() -> str:
 
     # Check Neo4j
     try:
-        from brain_indexer import create_neo4j_driver
+        from .indexer import create_neo4j_driver
         driver = create_neo4j_driver()
         with driver.session() as session:
             result = session.run("MATCH (n) RETURN count(n) as count")
@@ -276,7 +276,7 @@ def write_note(path: str, content: str, mode: str = "create") -> str:
         write_note("10_Projects/Project_X.md", "\\n## Update\\n- Progress", mode="append")
     """
     try:
-        from vault_writer import get_writer
+        from .vault_writer import get_writer
 
         writer = get_writer()
         result = writer.write_note(path, content, mode)
@@ -308,7 +308,7 @@ def append_to_daily(content: str) -> str:
         append_to_daily("## Learnings\\n- New pattern discovered")
     """
     try:
-        from vault_writer import get_writer
+        from .vault_writer import get_writer
 
         writer = get_writer()
         result = writer.append_to_daily(content)
@@ -355,7 +355,7 @@ def add_learning(topic: str, content: str, area: str = "SOPs") -> str:
     path = f"{folder}/{topic}.md"
 
     try:
-        from vault_writer import get_writer
+        from .vault_writer import get_writer
 
         writer = get_writer()
         result = writer.write_note(path, content, mode="create")
@@ -389,7 +389,7 @@ def delete_note(path: str) -> str:
         delete_note("30_Resources/SOPs/Deprecated_Pattern.md")
     """
     try:
-        from vault_writer import get_writer
+        from .vault_writer import get_writer
 
         writer = get_writer()
         result = writer.delete_note(path)

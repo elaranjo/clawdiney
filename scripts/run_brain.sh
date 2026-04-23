@@ -4,13 +4,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
 echo "🚀 Iniciando Clawdiney..."
 
 # 1. Iniciar a infraestrutura Docker (Neo4j e ChromaDB)
 echo "🐳 Iniciando infraestrutura Docker..."
-docker compose up -d chromadb neo4j
+docker compose -f docker/docker-compose.yml up -d chromadb neo4j
 
 # 2. Aguardar alguns segundos para os serviços iniciarem
 echo "⏳ Aguardando inicialização dos serviços..."
@@ -18,15 +19,15 @@ sleep 10
 
 # 3. Verificar se os serviços estão rodando
 echo "🔍 Verificando status dos serviços..."
-docker compose ps
+docker compose -f docker/docker-compose.yml ps
 
 # 4. Indexar o vault (se necessário)
 echo "🔍 Indexando o vault..."
-./venv/bin/python3 brain_indexer.py
+./venv/bin/python3 -m clawdiney.indexer
 
 # 5. Iniciar o servidor MCP em background
 echo "🧠 Iniciando servidor Clawdiney..."
-./venv/bin/python3 brain_mcp_server.py > /tmp/mcp_server.log 2>&1 &
+./venv/bin/python3 -m clawdiney.mcp_server > /tmp/mcp_server.log 2>&1 &
 
 # Armazenar o PID do processo em background
 MCP_PID=$!

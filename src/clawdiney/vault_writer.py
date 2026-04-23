@@ -12,8 +12,8 @@ from typing import TypedDict
 import chromadb
 from neo4j import GraphDatabase
 
-from incremental_indexer import IncrementalIndexer
-from logging_config import setup_logging
+from .incremental_indexer import IncrementalIndexer
+from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class VaultWriter:
     def _get_collection(self) -> chromadb.Collection:
         """Get or create ChromaDB collection."""
         if self._collection is None:
-            from brain_indexer import create_chroma_client, create_collection
+            from .indexer import create_chroma_client, create_collection
 
             self._collection = create_collection(create_chroma_client())
         return self._collection
@@ -52,7 +52,7 @@ class VaultWriter:
     def _get_neo4j_driver(self) -> GraphDatabase:
         """Get or create Neo4j driver."""
         if self._neo4j_driver is None:
-            from brain_indexer import create_neo4j_driver
+            from .indexer import create_neo4j_driver
 
             self._neo4j_driver = create_neo4j_driver()
         return self._neo4j_driver

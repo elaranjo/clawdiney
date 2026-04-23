@@ -3,7 +3,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from constants import (
+from .constants import (
     CHUNK_OVERLAP_DEFAULT,
     CHUNK_SIZE_DEFAULT,
     RERANK_THRESHOLD_DEFAULT,

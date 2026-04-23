@@ -22,9 +22,9 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
-from config import Config
-from incremental_indexer import IncrementalIndexer
-from logging_config import setup_logging
+from ..config import Config
+from ..incremental_indexer import IncrementalIndexer
+from ..logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

@@ -3,6 +3,12 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Environment Variables (SENSITIVE)
 .env
@@ -11,6 +17,9 @@ __pycache__/
 chroma_db/
 neo4j_data/
 chroma_data/
+
+# State files
+.clawdiney_state.json
 
 # OS Files
 .DS_Store

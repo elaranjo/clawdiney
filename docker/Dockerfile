@@ -8,20 +8,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar os arquivos necessários
+# Copiar requirements e instalar dependências Python
 COPY requirements.txt .
-COPY brain_mcp_server.py .
-COPY brain_indexer.py .
-COPY query_engine.py .
-COPY config.py .
-COPY constants.py .
-COPY chunking.py .
-COPY logging_config.py .
-COPY mcp_wrapper.py .
-COPY init_mcp.sh .
-
-# Instalar dependências Python
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código fonte
+COPY src/clawdiney/ ./clawdiney/
+COPY scripts/init_mcp.sh .
+
+# Instalar o pacote clawdiney em modo develop
+RUN pip install -e /app
 
 # Criar usuário não-root
 RUN useradd --create-home --shell /bin/bash appuser
