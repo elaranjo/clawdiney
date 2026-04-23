@@ -3,8 +3,16 @@
 
 import asyncio
 import json
+import os
 
+import pytest
 import httpx
+
+# Skip these tests in CI - they require a running MCP server
+pytestmark = pytest.mark.skipif(
+    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
+    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
+)
 
 
 async def test_mcp_server():

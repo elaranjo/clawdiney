@@ -1,6 +1,7 @@
 import os
 
 import pytest
+
 from clawdiney.query_engine import BrainQueryEngine
 
 pytestmark = pytest.mark.skipif(

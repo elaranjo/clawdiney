@@ -2,8 +2,16 @@
 """Script para testar a conexão com o servidor MCP do Clawdiney."""
 
 import json
+import os
 
+import pytest
 import requests
+
+# Skip these tests in CI - they require a running MCP server
+pytestmark = pytest.mark.skipif(
+    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
+    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
+)
 
 
 def send_request(url, headers, data):

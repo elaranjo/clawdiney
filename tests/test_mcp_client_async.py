@@ -2,9 +2,17 @@
 """Cliente simples para testar o servidor MCP do Clawdiney."""
 
 import asyncio
+import os
 
+import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+
+# Skip these tests in CI - they require a running MCP server
+pytestmark = pytest.mark.skipif(
+    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
+    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
+)
 
 
 async def test_mcp_server():
