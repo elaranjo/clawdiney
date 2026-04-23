@@ -166,18 +166,33 @@ docker compose down
 
 ### Via MCP Client (Recommended)
 
-With MCP configured, the agent should use `search_brain` as the primary discovery tool:
+With MCP configured, the agent has access to **read and write** tools:
+
+#### Read Tools (Discovery)
+
+- `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
+- `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
+- `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
+- `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
+- `health_check()` - Check health status of ChromaDB, Neo4j, and Ollama
+
+#### Write Tools (Knowledge Capture)
+
+- `write_note(path, content, mode)` - Create or update a note at any vault location
+- `append_to_daily(content)` - Append content to today's daily note (50_Daily/YYYY-MM-DD.md)
+- `add_learning(topic, content, area)` - Save learnings to appropriate folder (SOPs, Architecture, etc.)
+- `delete_note(path)` - Delete a note and remove from index
+
+**Example Workflow:**
 
 > *"Check in the Brain if there are any SOPs for production deployment."*
+> → Found existing SOP, update it: `write_note("30_Resources/SOPs/SOP_Deploy.md", updated_content, mode="overwrite")`
 
 > *"Search the brain for UI Design System patterns."*
+> → No pattern found, create new: `add_learning("Button_Component", "# Design System\\n\\nButton patterns...", area="DesignSystem")`
 
-> *"Use the search_brain tool to find the folder structure of repositories."*
-
-When a result is ambiguous, resolve it with:
-
-- `resolve_note(name)` to list canonical paths
-- `get_note_chunks(path)` to inspect indexed sections
+> *"Document today's learnings about the project."*
+> → `append_to_daily("## Learnings\\n- Discovered X about the architecture")`
 
 Full-file reading is intentionally outside the MCP workflow. The agent should use the repository or vault filesystem directly after `search_brain` has identified the relevant note.
 
@@ -348,6 +363,26 @@ The system has been tested mainly on **Ubuntu 22.04+** and **Debian 11+**, but i
 
 ### "What if I use another model instead of Qwen in Ollama?"
 **It works normally.** The Brain is model-agnostic. You use whatever model you prefer in Claude Code. The `bge-m3` is just for generating embeddings (vectors), not for answering questions.
+
+### "Can the agent write new notes automatically?"
+**Yes!** The MCP server includes write tools:
+- `write_note(path, content)` - Create or update any note
+- `append_to_daily(content)` - Add to today's daily note
+- `add_learning(topic, content, area)` - Save learnings to the right folder
+
+When the agent learns something new during a task, it can save it directly to the vault. The change is automatically indexed and becomes searchable within seconds.
+
+### "Where should I save different types of content?"
+Use the `add_learning()` tool which automatically routes to the correct folder:
+
+| Area | Folder | Example |
+|------|--------|---------|
+| `SOPs` | `30_Resources/SOPs/` | Procedures and standards |
+| `Architecture` | `30_Resources/Architecture/` | ADRs and design decisions |
+| `DesignSystem` | `30_Resources/DesignSystem/` | UI components and patterns |
+| `Projects` | `10_Projects/` | Active project documentation |
+| `Areas` | `20_Areas/` | Ongoing responsibility areas |
+| `Learnings` | `30_Resources/Learnings/` | General insights |
 
 ---
 

@@ -255,6 +255,154 @@ def health_check() -> str:
     return f"{status}\n\n" + "\n".join(results)
 
 
+# --- MCP Write Tools ---
+
+
+@mcp.tool()
+def write_note(path: str, content: str, mode: str = "create") -> str:
+    """
+    Create or update a note in the Obsidian vault.
+
+    Args:
+        path: Vault-relative path (e.g., "30_Resources/SOPs/SOP_NewPattern.md")
+        content: Markdown content to write
+        mode: "create" (fail if exists), "overwrite" (replace), or "append" (add to end)
+
+    Returns:
+        Confirmation message with path and indexing status
+
+    Examples:
+        write_note("30_Resources/SOPs/SOP_MyPattern.md", "# SOP\\n\\nContent here")
+        write_note("10_Projects/Project_X.md", "\\n## Update\\n- Progress", mode="append")
+    """
+    try:
+        from vault_writer import get_writer
+
+        writer = get_writer()
+        result = writer.write_note(path, content, mode)
+
+        if result["success"]:
+            chunks = result.get("chunks_indexed", 0)
+            return f"✅ {result['message']}\\nIndexed {chunks} chunks."
+        else:
+            return f"❌ {result['message']}"
+    except Exception as e:
+        logger.error(f"write_note failed: {e}")
+        return f"Error in write_note: {str(e)}"
+
+
+@mcp.tool()
+def append_to_daily(content: str) -> str:
+    """
+    Append content to today's daily note (50_Daily/YYYY-MM-DD.md).
+    Creates the file if it doesn't exist.
+
+    Args:
+        content: Markdown content to append
+
+    Returns:
+        Confirmation message with date and position
+
+    Examples:
+        append_to_daily("## Meeting Notes\\n- Discussed X\\n- Decided Y")
+        append_to_daily("## Learnings\\n- New pattern discovered")
+    """
+    try:
+        from vault_writer import get_writer
+
+        writer = get_writer()
+        result = writer.append_to_daily(content)
+
+        if result["success"]:
+            return f"✅ {result['message']}"
+        else:
+            return f"❌ {result['message']}"
+    except Exception as e:
+        logger.error(f"append_to_daily failed: {e}")
+        return f"Error in append_to_daily: {str(e)}"
+
+
+@mcp.tool()
+def add_learning(topic: str, content: str, area: str = "SOPs") -> str:
+    """
+    Save a learning or insight to the appropriate vault location.
+
+    Automatically determines the best folder based on the area parameter.
+
+    Args:
+        topic: Short topic name (becomes filename, e.g., "Backend_Pattern")
+        content: Learning content in markdown format
+        area: Category folder: "SOPs", "Architecture", "DesignSystem", "Projects", "Areas", "Learnings"
+
+    Returns:
+        Confirmation message with full path and next steps
+
+    Examples:
+        add_learning("Backend_Pattern", "# SOP\\n\\nStandard backend pattern...", area="SOPs")
+        add_learning("Microservice_X", "## Architecture Decision\\n\\nChose X because...", area="Architecture")
+    """
+    # Map area to folder
+    area_folders = {
+        "SOPs": "30_Resources/SOPs",
+        "Architecture": "30_Resources/Architecture",
+        "DesignSystem": "30_Resources/DesignSystem",
+        "Projects": "10_Projects",
+        "Areas": "20_Areas",
+        "Learnings": "30_Resources/Learnings",
+    }
+
+    folder = area_folders.get(area, "30_Resources/Learnings")
+    path = f"{folder}/{topic}.md"
+
+    try:
+        from vault_writer import get_writer
+
+        writer = get_writer()
+        result = writer.write_note(path, content, mode="create")
+
+        if result["success"]:
+            chunks = result.get("chunks_indexed", 0)
+            return (
+                f"✅ Learning saved to {path}\\n"
+                f"Indexed {chunks} chunks.\\n\\n"
+                f"You can now search for this content with search_brain()."
+            )
+        else:
+            return f"❌ {result['message']}"
+    except Exception as e:
+        logger.error(f"add_learning failed: {e}")
+        return f"Error in add_learning: {str(e)}"
+
+
+@mcp.tool()
+def delete_note(path: str) -> str:
+    """
+    Delete a note from the vault and remove it from the index.
+
+    Args:
+        path: Vault-relative path (e.g., "30_Resources/SOPs/Old_SOP.md")
+
+    Returns:
+        Confirmation or error message
+
+    Examples:
+        delete_note("30_Resources/SOPs/Deprecated_Pattern.md")
+    """
+    try:
+        from vault_writer import get_writer
+
+        writer = get_writer()
+        result = writer.delete_note(path)
+
+        if result["success"]:
+            return f"✅ {result['message']}"
+        else:
+            return f"❌ {result['message']}"
+    except Exception as e:
+        logger.error(f"delete_note failed: {e}")
+        return f"Error in delete_note: {str(e)}"
+
+
 if __name__ == "__main__":
     import signal
     import sys
@@ -275,6 +423,11 @@ if __name__ == "__main__":
         logger.info("Shutting down MCP server...")
         if _engine_instance is not None:
             _engine_instance.close()
+        # Cleanup writer singleton
+        from vault_writer import _writer_instance
+        if _writer_instance is not None:
+            if hasattr(_writer_instance, "_neo4j_driver") and _writer_instance._neo4j_driver:
+                _writer_instance._neo4j_driver.close()
         sys.exit(0)
 
     # Register signal handlers

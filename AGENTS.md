@@ -98,18 +98,45 @@ docker compose logs chromadb
 - `docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
 - `.env` - Configuration file for paths and connection settings (simplified)
 
-## Integration with Codex
+## Integration with MCP Clients
 
-The system integrates with Codex via the Model Context Protocol (MCP). When properly configured in `.Codex.json`, Codex can use these tools:
+The system integrates via the Model Context Protocol (MCP). When properly configured, the agent has access to **read and write** tools:
+
+### Read Tools (Discovery)
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
 2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
 3. `resolve_note(name)` - Resolve ambiguous note names to canonical vault-relative paths
 4. `get_note_chunks(path)` - List chunk headers for a note (structured preview)
+5. `health_check()` - Check health status of ChromaDB, Neo4j, and Ollama
 
-For reading full notes, use your editor or file system directly after resolving the path with `resolve_note`.
+### Write Tools (Knowledge Capture)
 
-Configuration example in `~/.Codex.json`:
+6. `write_note(path, content, mode)` - Create or update a note at any vault location
+   - `mode`: "create" (fail if exists), "overwrite" (replace), "append" (add to end)
+7. `append_to_daily(content)` - Append content to today's daily note (50_Daily/YYYY-MM-DD.md)
+8. `add_learning(topic, content, area)` - Save learnings to appropriate folder
+   - `area`: "SOPs", "Architecture", "DesignSystem", "Projects", "Areas", "Learnings"
+9. `delete_note(path)` - Delete a note and remove from index
+
+### Example Workflow
+
+```python
+# 1. Search for existing patterns
+search_brain("backend API deployment")
+
+# 2. If found, update the SOP
+write_note("30_Resources/SOPs/SOP_Deploy.md", updated_content, mode="append")
+
+# 3. If not found, create new learning
+add_learning("Backend_API_Deploy", "# SOP\\n\\nDeployment pattern...", area="SOPs")
+
+# 4. Document daily learnings
+append_to_daily("## Learnings\\n- Discovered X about the architecture")
+```
+
+### Configuration Example
+
 ```json
 {
   "projects": {

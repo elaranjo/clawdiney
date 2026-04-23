@@ -29,7 +29,11 @@ def main():
         from brain_mcp_server import mcp
 
         print(f"🔌 Iniciando servidor MCP com transporte {transport}...", flush=True)
-        mcp.run(transport=transport, mount_path=mount_path)
+        # mount_path é opcional - apenas passar se definido
+        run_kwargs = {"transport": transport}
+        if mount_path:
+            run_kwargs["mount_path"] = mount_path
+        mcp.run(**run_kwargs)
 
     except KeyboardInterrupt:
         print("🛑 Servidor MCP interrompido pelo usuário", flush=True)
