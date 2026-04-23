@@ -54,7 +54,7 @@ clawdiney = ["py.typed"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --cov=clawdiney --cov-report=term-missing"
+addopts = "-v"
 
 [tool.mypy]
 python_version = "3.10"
