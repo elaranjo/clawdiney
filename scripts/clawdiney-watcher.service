@@ -1,0 +1,24 @@
+[Unit]
+Description=Clawdiney Project Watcher - Auto-sync codebase changes to Obsidian
+After=network.target
+
+[Service]
+Type=simple
+User=ermanelaranjo
+WorkingDirectory=/home/ermanelaranjo/Documentos/projetos/clawdiney
+Environment="PATH=/home/ermanelaranjo/Documentos/projetos/clawdiney/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/ermanelaranjo/Documentos/projetos/clawdiney/venv/bin/python3 -m clawdiney.scripts.watch_projects /home/ermanelaranjo/Documentos/projetos
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ermanelaranjo/Documentos/projetos/clawdiney/logs/watcher.log
+StandardError=append:/home/ermanelaranjo/Documentos/projetos/clawdiney/logs/watcher.log
+
+# Create logs directory if needed
+ExecStartPre=/bin/mkdir -p /home/ermanelaranjo/Documentos/projetos/clawdiney/logs
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

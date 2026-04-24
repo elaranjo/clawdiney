@@ -102,6 +102,46 @@ This analyzes projects (Python, Node.js) and creates notes with:
 - Main commands/scripts
 - Entry points
 
+### Auto-Sync Watcher (NEW!)
+
+Keep Obsidian docs automatically synchronized with code changes:
+
+```bash
+# Start watcher in background
+./scripts/start_watcher.sh
+
+# Stop watcher
+./scripts/stop_watcher.sh
+
+# View live logs
+tail -f logs/watcher.log
+```
+
+**What it does:**
+- Monitors `/home/ermanelaranjo/Documentos/projetos` for file changes
+- Auto-detects changes in `.py`, `.ts`, `.js`, `.json`, `.toml`, `.yaml`, `.md`, etc.
+- Reindexes affected projects after 10s debounce (batches rapid changes)
+- High-priority for `package.json`, `pyproject.toml`, `requirements.txt`, etc.
+- Ignores `node_modules`, `__pycache__`, `venv`, `.git`, `dist`, `build`, etc.
+
+**Install as systemd service (auto-start on boot):**
+
+```bash
+# Copy service file
+sudo cp scripts/clawdiney-watcher.service /etc/systemd/system/
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable clawdiney-watcher
+sudo systemctl start clawdiney-watcher
+
+# Check status
+sudo systemctl status clawdiney-watcher
+
+# View logs
+journalctl -u clawdiney-watcher -f
+```
+
 ### Development Environment Setup
 
 Initial setup (installs dependencies, starts services, indexes vault):
