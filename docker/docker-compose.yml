@@ -4,7 +4,7 @@ services:
     image: redis:7-alpine
     container_name: clawdiney-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     command: redis-server --requirepass ${REDIS_PASSWORD:-changeme}
     volumes:
       - ../redis_data:/data
@@ -27,8 +27,8 @@ services:
     image: ${NEO4J_IMAGE:-neo4j:latest}
     container_name: clawdiney-neo4j
     ports:
-      - "7474:7474"  # Neo4j Browser (Web UI)
-      - "7687:7687"  # Bolt Protocol (Database Connection)
+      - "7475:7474"  # Neo4j Browser (Web UI)
+      - "7688:7687"  # Bolt Protocol (Database Connection)
     environment:
       - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}}
       - NEO4J_PLUGINS=["apoc"]
@@ -54,7 +54,7 @@ services:
     image: ${CHROMA_IMAGE:-chromadb/chroma:latest}
     container_name: clawdiney-chromadb
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ../chroma_data:/chroma/chroma
     networks:

@@ -31,3 +31,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+redis_data/
+src/clawdiney.egg-info/
+

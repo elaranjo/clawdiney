@@ -12,8 +12,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código fonte
-COPY src/clawdiney/ ./clawdiney/
+# Copiar código fonte e pyproject.toml
+COPY pyproject.toml .
+COPY src/ ./src/
 COPY scripts/init_mcp.sh .
 
 # Instalar o pacote clawdiney em modo develop
