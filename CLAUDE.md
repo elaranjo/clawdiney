@@ -29,12 +29,20 @@ clawdiney/
 │   ├── mcp_server.py         # MCP server for AI agents
 │   ├── config.py             # Configuration management
 │   ├── chunking.py           # Text chunking strategies
+│   ├── project_indexer.py    # Analyze codebases → Obsidian docs
+│   ├── project_index_config.py # Selective indexing patterns
+│   ├── query_cache.py        # Redis query cache
+│   ├── rag_optimizer.py      # MMR reranking, query preprocessing
+│   ├── constants.py          # Application constants
+│   ├── logging_config.py     # Logging setup
 │   └── scripts/
 │       ├── watch_vault.py    # File watcher for real-time sync
-│       └── sync_vault.py     # Manual sync script
-├── tests/                    # Test suite
+│       ├── sync_vault.py     # Manual sync script
+│       └── index_projects.py # CLI: index projects to Obsidian
+├── tests/                    # Test suite (pytest)
 ├── scripts/                  # Shell scripts
 ├── docker/                   # Docker configuration
+├── SECURITY_REVIEW.md        # Security audit documentation
 └── pyproject.toml            # Python project configuration
 ```
 
@@ -42,10 +50,16 @@ clawdiney/
 
 ### Running the System
 
-Start the infrastructure:
+Start the infrastructure (Neo4j, ChromaDB, Redis):
 ```bash
 docker compose -f docker/docker-compose.yml up -d
 ```
+
+**Ports (default):**
+- ChromaDB: `localhost:8001`
+- Neo4j Browser: `http://localhost:7475` (user: `neo4j`, pass: from `.env`)
+- Neo4j Bolt: `localhost:7688`
+- Redis: `localhost:6380`
 
 Index/re-index the Obsidian vault:
 ```bash
@@ -66,6 +80,27 @@ Or directly with Python:
 ```bash
 ./venv/bin/python3 -m clawdiney.query_engine "your query here"
 ```
+
+### Project Indexer (New!)
+
+Index your codebases and generate documentation for Obsidian:
+
+```bash
+# Preview what would be indexed
+./scripts/index_projects.sh ~/Documentos/projetos --dry-run
+
+# Index all projects (generates .md files in Obsidian)
+./scripts/index_projects.sh ~/Documentos/projetos
+
+# Or using Python directly
+./venv/bin/python3 -m clawdiney.scripts.index_projects ~/Documentos/projetos
+```
+
+This analyzes projects (Python, Node.js) and creates notes with:
+- Tech stack and dependencies
+- Directory structure
+- Main commands/scripts
+- Entry points
 
 ### Development Environment Setup
 
@@ -111,14 +146,31 @@ docker compose -f docker/docker-compose.yml logs chromadb
 
 ## Key Files and Components
 
+### Core Modules
 - `src/clawdiney/mcp_server.py` - MCP server exposing retrieval and note-resolution tools
-- `src/clawdiney/query_engine.py` - Core querying logic with semantic + graph search
-- `src/clawdiney/indexer.py` - Indexes Obsidian vault content into ChromaDB and Neo4j
+- `src/clawdiney/query_engine.py` - Core querying logic with semantic + graph search + RAG optimization
+- `src/clawdiney/indexer.py` - Full indexing of Obsidian vault into ChromaDB + Neo4j
 - `src/clawdiney/incremental_indexer.py` - Incremental sync with SHA-256 state tracking
 - `src/clawdiney/vault_writer.py` - Thread-safe vault write operations
+- `src/clawdiney/project_indexer.py` - **NEW**: Analyzes codebases and generates Obsidian docs
+- `src/clawdiney/project_index_config.py` - **NEW**: Selective file indexing patterns (include/exclude)
+
+### Supporting Modules
 - `src/clawdiney/config.py` - Centralized configuration management
-- `docker/docker-compose.yml` - Infrastructure definitions for Neo4j and ChromaDB
+- `src/clawdiney/chunking.py` - Text chunking strategies (headers, fixed-size)
+- `src/clawdiney/query_cache.py` - Redis query cache for repeated queries
+- `src/clawdiney/rag_optimizer.py` - MMR reranking, query preprocessing
+- `src/clawdiney/constants.py` - Application-wide constants
+- `src/clawdiney/logging_config.py` - Logging setup
+
+### Infrastructure
+- `docker/docker-compose.yml` - Infrastructure definitions (Neo4j, ChromaDB, Redis)
 - `.env` - Configuration file for paths and connection settings
+
+### Documentation
+- `SECURITY_REVIEW.md` - Security audit and best practices
+- `CLAUDE.md` - This file (development guide)
+- `README.md` - User-facing documentation
 
 ## Integration
 
@@ -170,3 +222,16 @@ Configuration example in `~/.claude.json`:
 ### Security Enhancements
 - Path validation with symlink resolution
 - Prevents symlink traversal attacks
+
+### Query Optimization (RAG)
+- Redis query cache for repeated queries
+- MMR (Maximal Marginal Relevance) reranking
+- Query preprocessing with expansion
+
+### Project Indexer (NEW - feature/project-indexer)
+- Analyzes Python and Node.js projects
+- Generates standardized Markdown docs for Obsidian
+- Selective file indexing with include/exclude patterns
+- Security: path traversal prevention, filename sanitization
+- 12 unit tests with 100% pass rate
+- See `SECURITY_REVIEW.md` for audit details
