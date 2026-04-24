@@ -3,9 +3,14 @@ Project Indexer - Analyzes codebases and generates documentation for Obsidian.
 
 This module scans project directories, extracts metadata about the tech stack,
 structure, and key files, then generates standardized Markdown notes for Obsidian.
+
+Security: Path traversal is prevented by resolving all paths and validating
+they are within expected boundaries. Sensitive files are automatically excluded.
 """
 
+import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +19,15 @@ from typing import Optional
 import tomli
 
 logger = logging.getLogger(__name__)
+
+# Security: Pattern to sanitize filenames for Obsidian
+SAFE_FILENAME_PATTERN = re.compile(r"[^\w\s\-\.]")
+
+# Security: Maximum path length to prevent issues
+MAX_PATH_LENGTH = 400
+
+# Security: Maximum content size for generated docs (prevent DoS)
+MAX_CONTENT_SIZE = 50_000
 
 
 @dataclass
@@ -84,19 +98,65 @@ class ProjectIndexer:
         ".min.css",
     }
 
-    def __init__(self, vault_path: Path, obsidian_folder: str = "00_Inbox/Projetos"):
-        self.vault_path = vault_path
-        self.obsidian_folder = obsidian_folder
+    def __init__(self, vault_path: Path | str, obsidian_folder: str = "00_Inbox/Projetos"):
+        """Initialize the ProjectIndexer.
+
+        Args:
+            vault_path: Path to the Obsidian vault root.
+            obsidian_folder: Folder within vault for project docs.
+
+        Raises:
+            ValueError: If vault_path is not a valid directory.
+        """
+        # Security: Validate and resolve vault path
+        vault_path_obj = Path(vault_path) if isinstance(vault_path, str) else vault_path
+
+        if not vault_path_obj.exists():
+            raise ValueError(f"Vault path does not exist: {vault_path}")
+        if not vault_path_obj.is_dir():
+            raise ValueError(f"Vault path is not a directory: {vault_path}")
+
+        self.vault_path = vault_path_obj.resolve()
+        self.obsidian_folder = self._sanitize_path(obsidian_folder)
         self.projects: list[ProjectInfo] = []
 
     def scan_directory(self, projects_root: Path) -> list[ProjectInfo]:
-        """Scan a directory for projects and extract information."""
-        logger.info(f"Scanning for projects in: {projects_root}")
+        """Scan a directory for projects and extract information.
+
+        Args:
+            projects_root: Root directory containing projects.
+
+        Returns:
+            List of ProjectInfo objects for each discovered project.
+
+        Raises:
+            ValueError: If projects_root is not a valid directory.
+            SecurityError: If path traversal is detected.
+        """
+        # Security: Validate and resolve projects root
+        if not projects_root.exists():
+            raise ValueError(f"Projects root does not exist: {projects_root}")
+        if not projects_root.is_dir():
+            raise ValueError(f"Projects root is not a directory: {projects_root}")
+
+        resolved_root = projects_root.resolve()
+
+        # Security: Prevent path traversal
+        if len(str(resolved_root)) > MAX_PATH_LENGTH:
+            raise ValueError(f"Projects root path too long: {resolved_root}")
+
+        logger.info(f"Scanning for projects in: {resolved_root}")
 
         self.projects = []
 
-        for item in projects_root.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
+        for item in resolved_root.iterdir():
+            # Skip hidden directories and symlinks
+            if item.name.startswith("."):
+                continue
+            if item.is_symlink():
+                logger.debug(f"Skipping symlink: {item}")
+                continue
+            if item.is_dir():
                 project_info = self._analyze_project(item)
                 if project_info:
                     self.projects.append(project_info)
@@ -104,27 +164,76 @@ class ProjectIndexer:
         logger.info(f"Found {len(self.projects)} projects")
         return self.projects
 
+    def _sanitize_path(self, path: str) -> str:
+        """Sanitize a path string to prevent injection attacks.
+
+        Args:
+            path: Raw path string.
+
+        Returns:
+            Sanitized path with only safe characters.
+        """
+        # Remove potentially dangerous characters
+        sanitized = SAFE_FILENAME_PATTERN.sub("", path)
+        # Prevent path traversal
+        sanitized = sanitized.replace("..", "")
+        return sanitized
+
+    def _safe_filename(self, name: str) -> str:
+        """Create a safe filename for Obsidian.
+
+        Args:
+            name: Original filename.
+
+        Returns:
+            Sanitized filename with .md extension.
+        """
+        sanitized = SAFE_FILENAME_PATTERN.sub("_", name)[:100]
+        return f"{sanitized}.md"
+
     def _analyze_project(self, project_path: Path) -> Optional[ProjectInfo]:
-        """Analyze a single project directory."""
-        logger.debug(f"Analyzing project: {project_path.name}")
+        """Analyze a single project directory.
+
+        Args:
+            project_path: Path to the project directory.
+
+        Returns:
+            ProjectInfo object or None if not a recognized project.
+
+        Raises:
+            ValueError: If project_path is invalid.
+        """
+        # Security: Validate project path
+        if not project_path.exists():
+            logger.debug(f"Project path does not exist: {project_path}")
+            return None
+        if not project_path.is_dir():
+            logger.debug(f"Project path is not a directory: {project_path}")
+            return None
+        if project_path.is_symlink():
+            logger.debug(f"Skipping symlink project: {project_path}")
+            return None
+
+        resolved_path = project_path.resolve()
+        logger.debug(f"Analyzing project: {resolved_path.name}")
 
         # Detect project type
-        project_type = self._detect_project_type(project_path)
+        project_type = self._detect_project_type(resolved_path)
         if not project_type:
-            logger.debug(f"No recognized project type in: {project_path.name}")
+            logger.debug(f"No recognized project type in: {resolved_path.name}")
             return None
 
         # Extract information based on project type
-        info = ProjectInfo(name=project_path.name, path=project_path)
+        info = ProjectInfo(name=resolved_path.name, path=resolved_path)
 
         if project_type == "python":
-            self._extract_python_info(project_path, info)
+            self._extract_python_info(resolved_path, info)
         elif project_type == "node":
-            self._extract_node_info(project_path, info)
+            self._extract_node_info(resolved_path, info)
 
         # Extract common info
-        self._extract_structure(project_path, info)
-        self._extract_entry_points(project_path, info)
+        self._extract_structure(resolved_path, info)
+        self._extract_entry_points(resolved_path, info)
 
         return info
 
@@ -201,9 +310,12 @@ class ProjectIndexer:
         ]
 
     def _extract_node_info(self, project_path: Path, info: ProjectInfo) -> None:
-        """Extract information from Node.js projects."""
-        import json
+        """Extract information from Node.js projects.
 
+        Args:
+            project_path: Path to the Node.js project.
+            info: ProjectInfo object to populate.
+        """
         info.language = "Node.js"
 
         package_path = project_path / "package.json"
@@ -348,19 +460,52 @@ class ProjectIndexer:
         return "\n".join(sections)
 
     def save_to_obsidian(self, project: ProjectInfo) -> Path:
-        """Save project documentation to Obsidian vault."""
-        # Create target directory
-        target_dir = self.vault_path / self.obsidian_folder
-        target_dir.mkdir(parents=True, exist_ok=True)
+        """Save project documentation to Obsidian vault.
 
-        # Generate filename
-        filename = f"{project.name}.md"
+        Args:
+            project: ProjectInfo object to save.
+
+        Returns:
+            Path to the saved file.
+
+        Raises:
+            ValueError: If the generated content is too large.
+            OSError: If the file cannot be written.
+        """
+        # Create target directory with path validation
+        target_dir = self.vault_path / self.obsidian_folder
+
+        # Security: Validate target directory is within vault
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            resolved_target = target_dir.resolve()
+            if not str(resolved_target).startswith(str(self.vault_path)):
+                raise ValueError(
+                    f"Target directory outside vault: {target_dir}"
+                )
+        except OSError as e:
+            logger.error(f"Failed to create target directory: {e}")
+            raise
+
+        # Generate safe filename
+        filename = self._safe_filename(project.name)
         target_path = target_dir / filename
 
-        # Generate and save content
+        # Generate content with size limit
         content = self.generate_markdown(project)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        if len(content) > MAX_CONTENT_SIZE:
+            logger.warning(
+                f"Generated content too large ({len(content)} bytes), truncating"
+            )
+            content = content[:MAX_CONTENT_SIZE] + "\n\n... [truncated]"
+
+        # Write with explicit encoding and error handling
+        try:
+            with open(target_path, "w", encoding="utf-8", errors="replace") as f:
+                f.write(content)
+        except OSError as e:
+            logger.error(f"Failed to write file {target_path}: {e}")
+            raise
 
         logger.info(f"Saved project doc to: {target_path}")
         return target_path

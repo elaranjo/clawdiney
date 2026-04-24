@@ -31,16 +31,17 @@ from clawdiney.project_indexer import ProjectIndexer
 # Load environment variables
 load_dotenv()
 
-# Setup logging
+# Setup logging with better formatting
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 
-def main():
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Index projects and generate documentation for Obsidian",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -82,54 +83,130 @@ def main():
         help="Obsidian folder for project docs (default: 00_Inbox/Projetos)",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def validate_paths(projects_root: Path, vault: Path) -> bool:
+    """Validate input and output paths.
+
+    Args:
+        projects_root: Root directory containing projects.
+        vault: Obsidian vault path.
+
+    Returns:
+        True if valid, False otherwise.
+    """
+    # Security: Resolve and validate paths
+    try:
+        resolved_root = projects_root.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        logger.error(f"Invalid projects root: {e}")
+        return False
+
+    if not resolved_root.is_dir():
+        logger.error(f"Projects root is not a directory: {resolved_root}")
+        return False
+
+    try:
+        resolved_vault = vault.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        logger.error(f"Invalid vault path: {e}")
+        return False
+
+    if not resolved_vault.is_dir():
+        logger.error(f"Vault is not a directory: {resolved_vault}")
+        return False
+
+    # Security: Prevent path traversal between vault and projects
+    if str(resolved_vault).startswith(str(resolved_root)):
+        logger.warning(
+            "Vault is inside projects directory - this may cause recursive indexing"
+        )
+
+    return True
+
+
+def run_dry_run(indexer: ProjectIndexer, projects_root: Path) -> None:
+    """Run indexer in dry-run mode.
+
+    Args:
+        indexer: ProjectIndexer instance.
+        projects_root: Root directory containing projects.
+    """
+    logger.info("DRY RUN - No files will be saved\n")
+    projects = indexer.scan_directory(projects_root)
+
+    for project in projects:
+        print(f"\n📁 {project.name}")
+        print(f"   Path: {project.path}")
+        print(f"   Language: {project.language or 'Unknown'}")
+        print(f"   Stack: {', '.join(project.stack) or 'None detected'}")
+        print(f"   Dependencies: {len(project.dependencies)}")
+        print(f"   Scripts: {len(project.scripts)}")
+        print(f"   Entry points: {', '.join(project.entry_points) or 'None'}")
+
+    print(f"\n\nTotal projects found: {len(projects)}")
+    print("To save documentation, run without --dry-run")
+
+
+def run_indexing(indexer: ProjectIndexer, projects_root: Path) -> int:
+    """Run the indexer and save documentation.
+
+    Args:
+        indexer: ProjectIndexer instance.
+        projects_root: Root directory containing projects.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
+    logger.info("Indexing projects...")
+    saved_paths = indexer.index_all(projects_root)
+
+    print(f"\n✅ Indexed {len(indexer.projects)} projects")
+    print("\nSaved documentation:")
+    for path in saved_paths:
+        print(f"  📄 {path}")
+
+    print("\n💡 Tip: Run the Clawdiney indexer to make projects searchable")
+    print("   python -m clawdiney.indexer")
+
+    return 0
+
+
+def main() -> int:
+    """Main entry point.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
+    args = parse_args()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Validate paths
-    if not args.projects_root.exists():
-        logger.error(f"Projects root does not exist: {args.projects_root}")
-        sys.exit(1)
-
-    if not args.vault.exists():
-        logger.error(f"Obsidian vault does not exist: {args.vault}")
-        sys.exit(1)
+    if not validate_paths(args.projects_root, args.vault):
+        return 1
 
     logger.info(f"Scanning projects in: {args.projects_root}")
     logger.info(f"Output vault: {args.vault}")
 
-    # Create indexer
-    indexer = ProjectIndexer(vault_path=args.vault, obsidian_folder=args.folder)
+    try:
+        # Create indexer
+        indexer = ProjectIndexer(
+            vault_path=args.vault, obsidian_folder=args.folder
+        )
+    except ValueError as e:
+        logger.error(f"Failed to initialize indexer: {e}")
+        return 1
 
     if args.dry_run:
-        logger.info("DRY RUN - No files will be saved\n")
-        projects = indexer.scan_directory(args.projects_root)
-
-        for project in projects:
-            print(f"\n📁 {project.name}")
-            print(f"   Path: {project.path}")
-            print(f"   Language: {project.language or 'Unknown'}")
-            print(f"   Stack: {', '.join(project.stack) or 'None detected'}")
-            print(f"   Dependencies: {len(project.dependencies)}")
-            print(f"   Scripts: {len(project.scripts)}")
-            print(f"   Entry points: {', '.join(project.entry_points) or 'None'}")
-
-        print(f"\n\nTotal projects found: {len(projects)}")
-        print("To save documentation, run without --dry-run")
-
+        run_dry_run(indexer, args.projects_root)
     else:
-        logger.info("Indexing projects...")
-        saved_paths = indexer.index_all(args.projects_root)
+        return run_indexing(indexer, args.projects_root)
 
-        print(f"\n✅ Indexed {len(indexer.projects)} projects")
-        print("\nSaved documentation:")
-        for path in saved_paths:
-            print(f"  📄 {path}")
-
-        print("\n💡 Tip: Run the Clawdiney indexer to make projects searchable")
-        print("   python -m clawdiney.indexer")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
