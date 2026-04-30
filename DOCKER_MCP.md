@@ -56,7 +56,7 @@ docker compose up -d
 ```
 
 Isso iniciará:
-- **Neo4j** (porta 7474 browser, 7687 bolt)
+- **Neo4j** (porta 7476 browser, 7689 bolt — portas externas mapeadas para 7474/7687 internas)
 - **ChromaDB** (porta 8001)
 - **MCP Server** (porta 8006)
 
@@ -134,7 +134,7 @@ Verifique se as redes Docker estão corretas:
 
 ```bash
 docker network ls
-docker network inspect clawdiney_brain-network
+docker network inspect docker_brain-network
 ```
 
 ## Arquitetura
