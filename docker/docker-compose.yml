@@ -27,8 +27,8 @@ services:
     image: ${NEO4J_IMAGE:-neo4j:latest}
     container_name: clawdiney-neo4j
     ports:
-      - "7475:7474"  # Neo4j Browser (Web UI)
-      - "7688:7687"  # Bolt Protocol (Database Connection)
+      - "7476:7474"  # Neo4j Browser (Web UI)
+      - "7689:7687"  # Bolt Protocol (Database Connection)
     environment:
       - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}}
       - NEO4J_PLUGINS=["apoc"]
@@ -85,7 +85,8 @@ services:
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
       - MODEL_NAME=${MODEL_NAME:-bge-m3:latest}
       - RERANK_MODEL_NAME=${RERANK_MODEL_NAME:-}
-      - MCP_TRANSPORT=stdio
+      - MCP_TRANSPORT=sse
+      - OLLAMA_HOST=host.docker.internal
     depends_on:
       neo4j:
         condition: service_healthy
