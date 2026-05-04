@@ -2,7 +2,7 @@
 
 **Expanded Brain for Coding Agents**
 
-A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a living knowledge source for coding agents.
+A hybrid **Vector + Graph** system that transforms your Obsidian vaults into a living knowledge source for AI coding agents.
 
 <p align="center">
   <img src="assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
@@ -12,12 +12,16 @@ A hybrid **Vector + Graph** system that transforms your Obsidian Vault into a li
 
 ## 🚀 Overview
 
-Clawdiney enables AI agents to query your knowledge base with a retrieval-first workflow:
+Clawdiney is a **multi-vault** knowledge system. It indexes multiple Obsidian vaults — one per project — and provides semantic search + knowledge graph navigation for AI agents.
 
+Core capabilities:
+
+- **Multi-Vault Architecture:** Each project gets its own vault with isolated data (separate ChromaDB collection, namespaced Neo4j nodes)
+- **CWD Auto-Detection:** The system detects which vault to use based on your current working directory — no manual switching
 - **Semantic Search:** Finds patterns, SOPs and components by meaning (not just keywords)
-- **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]`
-- **Canonical Note Resolution:** Resolves ambiguous note names to vault-relative paths
-- **Native Integration:** Connects to MCP-compatible agents via Model Context Protocol
+- **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]`  
+- **Linking & Fallback:** Vaults can link to related vaults (e.g., SDK projects link to their parent project). Searches cascade through the chain: current vault → linked vaults → general
+- **Native Integration:** Connects to MCP-compatible agents (OpenCode, Claude Code, etc.) via SSE or stdio
 
 ---
 
@@ -41,24 +45,6 @@ Before starting, make sure you have installed:
 ---
 
 ## 🛠️ Quick Installation
-
-### Create the Vault (If you don't have one)
-
-If you **don't have a vault yet**, use the creation script:
-
-```bash
-chmod +x setup_vault.sh
-./setup_vault.sh
-```
-
-**The script will:**
-- ✅ Create folder structure (P.A.R.A. method)
-- ✅ Create `00_Index.md` (vault documentation)
-- ✅ Create basic SOPs (Backend, Design System, etc.)
-- ✅ Create `Agent_Protocol.md` (instructions for AI)
-- ✅ Optional: Initialize Git repository
-
----
 
 **Clone this repository:**
 ```bash
@@ -93,39 +79,104 @@ The `setup_brain.sh` script automatically executes:
 | 📦 | Installs Python dependencies (`neo4j`, `chromadb`, `ollama`, etc.) |
 | ✅ | **Checks and auto-repairs** missing dependencies |
 | 🦙 | Downloads embedding model (`bge-m3`) via Ollama |
-| 🧠 | Indexes your Vault in the database |
+| 🧠 | Indexes your vault(s) in the database |
 
 ---
 
-**⚠️ Important:** Point `VAULT_PATH` to the **dedicated vault**, not your personal vault.
+## 🏗️ Multi-Vault Architecture
 
-### 2. Configure Your MCP Client
+### How Vaults Work
 
-**Option A: Local Python (Recommended for development)**
+Clawdiney discovers vaults by scanning subdirectories in `VAULTS_DIR` (default: `~/clawdiney-vaults/`). Each subdirectory must contain a `clawdiney.toml` config file.
 
-```json
-{
-  "projects": {
-    "/home/YOUR_WORK_DIRECTORY": {
-      "mcpServers": {
-        "clawdiney": {
-          "command": "/home/YOUR_WORK_DIRECTORY/clawdiney/venv/bin/python3",
-          "args": [
-            "-m", "clawdiney.mcp_server"
-          ]
-        }
-      }
-    }
-  }
-}
+### clawdiney.toml format
+
+Each vault requires a minimal config file:
+
+```toml
+id = "Budget"
+name = "Budget"
+description = "Projeto: Budget"
+linked_vaults = ["general"]
 ```
 
-**Option B: Streamable HTTP (For Docker deployments)**
+| Field | Description |
+|-------|-------------|
+| `id` | Unique vault identifier (matched against directory names for CWD detection) |
+| `name` | Display name |
+| `description` | Optional description |
+| `linked_vaults` | Vault IDs for fallback search (e.g., SDK → parent project) |
+
+### CWD Auto-Detection (Convention > Configuration)
+
+When you call any MCP tool without specifying `vault=`, Clawdiney inspects your current working directory. It walks the path **backwards** until it finds a directory name matching a vault `id`.
+
+| Your CWD | Detected Vault |
+|---|---|
+| `~/projetos/Budget/` | `Budget` |
+| `~/projetos/OnflyApi/src/` | `OnflyApi` |
+| `~/projetos/Budget-SDK/` | `Budget-SDK` |
+| `/any/other/directory` | `general` (fallback) |
+
+### Linking & Fallback Chain
+
+Vaults can link to related vaults for broader search results:
+
+```
+Budget-SDK ──linked_to──► [general, Budget]
+                                │
+User-SDK  ──linked_to──► [general, User]
+                                │
+clawdiney ──linked_to──► []   (isolated — no fallback)
+```
+
+When searching, Clawdiney queries: **current vault → linked vaults (in order) → general**. Results from all sources are merged and deduplicated.
+
+### Using Your Personal Vault as `general`
+
+To make your personal Obsidian vault the fallback `general` vault, create a symlink:
+
+```bash
+# Create clawdiney.toml inside your personal vault
+cat >> /path/to/ObsidianVault/clawdiney.toml << 'EOF'
+id = "general"
+name = "General"
+description = "Personal Obsidian vault - general knowledge"
+linked_vaults = []
+EOF
+
+# Create symlink
+ln -sfn /path/to/ObsidianVault ~/clawdiney-vaults/general
+
+# Reindex
+OLLAMA_HOST= ./venv/bin/python3 -m clawdiney.indexer
+```
+
+### Provisioning Project Vaults
+
+For teams with multiple projects, use the provisioning script to scan a projects directory and create vaults automatically:
+
+```bash
+./scripts/provision_project_vaults.sh
+```
+
+This scans `~/projetos/` and creates a vault per project with:
+- Auto-generated `clawdiney.toml` (SDKs linked to parent, clawdiney isolated)
+- P.A.R.A. folder structure (`00_Inbox`, `10_Projects`, `20_Areas`, `30_Resources`, `40_Archives`, `50_Daily`)
+- Project analysis files (README, Architecture, API docs, Domain model)
+
+---
+
+## 🔌 MCP Client Configuration
+
+### Option A: Docker (SSE — Recommended)
+
+The Docker container uses SSE transport on port 8006:
 
 ```json
 {
   "projects": {
-    "/home/YOUR_WORK_DIRECTORY": {
+    "/path/to/your/project": {
       "mcpServers": {
         "clawdiney": {
           "url": "http://localhost:8006/mcp"
@@ -136,7 +187,26 @@ The `setup_brain.sh` script automatically executes:
 }
 ```
 
-For Docker deployment instructions, see [DOCKER_MCP.md](DOCKER_MCP.md).
+### Option B: Local Python (stdio)
+
+```json
+{
+  "projects": {
+    "/home/YOUR_PROJECTS_DIR": {
+      "mcpServers": {
+        "clawdiney": {
+          "command": "/path/to/clawdiney/venv/bin/python3",
+          "args": ["-m", "clawdiney.mcp_server"]
+        }
+      }
+    }
+  }
+}
+```
+
+> **Note:** The Docker container uses SSE transport. The local Python server defaults to stdio. Set `MCP_TRANSPORT=sse` in your `.env` for local SSE mode.
+
+For detailed Docker deployment instructions, see [DOCKER_MCP.md](DOCKER_MCP.md).
 
 ---
 
@@ -215,28 +285,31 @@ If MCP is not available, use the direct script:
 ## 🧩 Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Claude Code (Agent)                     │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ MCP Protocol / Shell
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Clawdiney (Server)                        │
-│  ┌──────────────────────┐     ┌──────────────────────────┐  │
-│  │   ChromaDB (Vector)  │     │   Neo4j (Graph)          │  │
-│  │  - Semantic Search   │     │  - Relationships         │  │
-│  │  - bge-m3 embeddings │     │  - [[WikiLinks]]         │  │
-│  └──────────────────────┘     └──────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Obsidian Vault (Knowledge Source)              │
-│  - SOPs, Design System, Architecture, Patterns             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                AI Agent (OpenCode, Claude, etc.)        │
+└────────────────────────┬────────────────────────────────┘
+                         │ MCP Protocol (SSE / stdio)
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              Clawdiney MCP Server                        │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
+│  │  ChromaDB    │ │    Neo4j     │ │  Vault Detector  │ │
+│  │  (Vector)    │ │   (Graph)    │ │  (CWD-based)     │ │
+│  │  per-vault   │ │  namespaced  │ │  → vault_id      │ │
+│  │  collections │ │  :Note nodes │ └──────────────────┘ │
+│  └──────┬───────┘ └──────┬───────┘                      │
+└─────────┼────────────────┼──────────────────────────────┘
+          │                │
+          ▼                ▼
+┌─────────────────────────────────────────────────────────┐
+│              VAULTS_DIR (~/clawdiney-vaults/)            │
+│                                                         │
+│  Budget/  Budget-SDK/  OnflyApi/  User/  channel-back/  │
+│  Company/ Company-SDK/ credit/    ...→ general/ (symlink)│
+│                                                         │
+│  Each vault has: clawdiney.toml + P.A.R.A. structure    │
+└─────────────────────────────────────────────────────────┘
 ```
-
----
 
 ## 📁 Project Structure
 
@@ -244,24 +317,30 @@ If MCP is not available, use the direct script:
 clawdiney/
 ├── src/clawdiney/            # Main Python package
 │   ├── __init__.py           # Package exports
-│   ├── indexer.py            # Full indexing (ChromaDB + Neo4j)
-│   ├── incremental_indexer.py # Incremental sync with state tracking
-│   ├── query_engine.py       # Hybrid search (vector + graph)
-│   ├── vault_writer.py       # Thread-safe write operations
-│   ├── mcp_server.py         # MCP server for AI agents
-│   ├── mcp_wrapper.py        # Docker MCP wrapper
-│   ├── config.py             # Configuration management
+│   ├── config.py             # Multi-vault configuration with VAULTS_DIR discovery
+│   ├── vault_config.py       # VaultConfig dataclass + clawdiney.toml parser
+│   ├── indexer.py            # Full indexing (ChromaDB per-vault + Neo4j namespaced)
+│   ├── incremental_indexer.py# Incremental sync with state tracking
+│   ├── query_engine.py       # Hybrid search with vault fallback chain
+│   ├── vault_writer.py       # Thread-safe write operations per vault
+│   ├── mcp_server.py         # MCP server with CWD auto-detection + vault parameter
+│   ├── mcp_wrapper.py        # Docker MCP wrapper (SSE transport)
 │   ├── chunking.py           # Text chunking strategies
 │   ├── constants.py          # Application constants
+│   ├── embedding_providers.py# Embedding provider interfaces
 │   ├── logging_config.py     # Logging setup
-│   ├── embedding_providers.py # Embedding provider interfaces
+│   ├── cli.py                # CLI entry point
 │   └── scripts/
 │       ├── watch_vault.py    # File watcher for real-time sync
-│       └── sync_vault.py     # Manual sync script
+│       └── sync_vault.py     # Manual sync script (per-vault aware)
 │
 ├── tests/                    # Test suite
-│   ├── test_brain_engine.py
-│   ├── test_integration.py
+│   ├── test_config.py
+│   ├── test_vault_config.py
+│   ├── test_indexer.py
+│   ├── test_query_engine.py
+│   ├── test_mcp_server.py
+│   ├── test_vault_writer.py
 │   └── ...
 │
 ├── scripts/                  # Shell scripts
@@ -269,15 +348,18 @@ clawdiney/
 │   ├── run_brain.sh          # Start all services
 │   ├── ask_brain.sh          # Query from command line
 │   ├── run_tests.sh          # Run test suite
+│   ├── provision_project_vaults.sh  # Scan ~/projetos/ and create vaults
+│   ├── migrate_to_multi_vault.sh    # Migrate single-vault to multi-vault
 │   └── ...
 │
 ├── docker/                   # Docker configuration
 │   ├── Dockerfile
 │   └── docker-compose.yml
 │
-├── pyproject.toml            # Python project configuration
-├── requirements.txt          # Python dependencies
-└── README.md                 # This file
+├── .env.example              # Environment template with multi-vault setup
+├── pyproject.toml             # Python project configuration
+├── requirements.txt           # Python dependencies
+└── README.md                  # This file
 ```
 
 ---
@@ -318,7 +400,8 @@ The agent has immediate access to new/modified notes after sync completes.
 
 ## 🛡️ Privacy and Security
 
-- **Personal Vault vs. Dedicated Vault:** This system was designed to use a **dedicated vault**. We don't recommend using your personal vault.
+- **Multi-Vault Isolation:** Each project's data stays in its own directory under `VAULTS_DIR`. No vault reads another vault's `.md` files.
+- **Symlink Support:** You can symlink a vault directory, allowing you to keep your personal vault in one location while Clawdiney references it.
 - **Local Data:** Everything runs locally on your machine. Nothing is sent to the cloud (except if you use cloud models).
 - **Isolation:** Database data (Neo4j/ChromaDB) stays in local Docker volumes.
 
@@ -327,17 +410,24 @@ The agent has immediate access to new/modified notes after sync completes.
 ## 🐛 Troubleshooting
 
 ### MCP client doesn't see the server
-- Check if the client configuration points to `clawdiney.mcp_server`.
+- Check if the client configuration points to `clawdiney.mcp_server` or `http://localhost:8006/mcp`.
 - Restart the client session.
-- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server`
+- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server` (stdio) or `curl http://localhost:8006/sse` (SSE)
 
-### Neo4j connection error
-- Check if the container is running: `docker ps | grep neo4j`
-- If necessary, restart: `docker compose -f docker/docker-compose.yml restart`
+### Neo4j connection error / Container restarting
+- Check if the container is running: `docker compose -f docker/docker-compose.yml ps neo4j`
+- If `neo4j_data/` has permission issues (UID 7474 ownership): `sudo chown -R 7474:7474 neo4j_data && docker compose restart neo4j`
+- If the problem persists, delete the data: `sudo rm -rf neo4j_data && docker compose restart neo4j`
 
 ### ChromaDB connection error
 - Check logs: `docker compose -f docker/docker-compose.yml logs chromadb`
 - Recreate the database (data will be lost): `rm -rf chroma_data && docker compose -f docker/docker-compose.yml up -d`
+
+### MCP Server restart loop (Docker)
+- The Docker container now uses **SSE transport** (fixed in v2.0). If you see continuous restarts:
+  - Verify `MCP_TRANSPORT=sse` in `docker/docker-compose.yml`
+  - Verify `OLLAMA_HOST=host.docker.internal` is set for container-to-host Ollama connectivity
+  - Check logs: `docker compose -f docker/docker-compose.yml logs mcp-server`
 
 ---
 
@@ -380,7 +470,23 @@ WATCHER_MODE=true ./run_brain.sh
 **No.** Obsidian is just an editor. The Brain reads `.md` files directly, so you only need the Vault files.
 
 ### "Can I use my personal vault?"
-**Technically yes, but we don't recommend it.** If you point to your personal vault, it may cause confusion with the agent's data.
+**Yes!** Use the symlink approach:
+```bash
+# Add clawdiney.toml to your personal vault
+cat >> /path/to/your/vault/clawdiney.toml << 'EOF'
+id = "general"
+name = "General"
+description = "Personal Obsidian vault"
+linked_vaults = []
+EOF
+
+# Symlink it as the general vault
+ln -sfn /path/to/your/vault ~/clawdiney-vaults/general
+
+# Reindex
+./venv/bin/python3 -m clawdiney.indexer
+```
+Your vault becomes the fallback `general` vault — searched whenever a more specific vault doesn't match.
 
 ### "How long does indexing take?"
 Initial full sync depends on vault size:

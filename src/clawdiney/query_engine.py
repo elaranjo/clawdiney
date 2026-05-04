@@ -27,6 +27,7 @@ from .constants import (
 from .logging_config import setup_logging
 from .query_cache import QueryCache
 from .rag_optimizer import MMRReranker, QueryPreprocessor
+from .vault_config import VaultConfig, load_vault_config
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,21 @@ class Note(TypedDict):
 
 
 class BrainQueryEngine:
-    def __init__(self):
-        self.vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
+    def __init__(self, vault: str | None = None):
+        self.current_vault = vault or Config.get_default_vault()
+
+        vault_path = Config.get_vault_path(self.current_vault)
+        if isinstance(vault_path, (str, Path)):
+            self.vault_root = Path(vault_path).expanduser().resolve()
+        else:
+            self.vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
+
+        self.vault_config: VaultConfig | None = None
+        try:
+            if self.vault_root.joinpath("clawdiney.toml").exists():
+                self.vault_config = load_vault_config(self.vault_root)
+        except Exception:
+            pass
 
         # ChromaDB Setup - Always use HTTP client
         chroma_config = Config.get_chroma_client_config()
@@ -58,9 +72,19 @@ class BrainQueryEngine:
         )
         # Configura timeout para 300 segundos no cliente httpx subjacente
         self.chroma_client.timeout = httpx.Timeout(300.0)
-        self.vector_collection = self.chroma_client.get_collection(
-            name="obsidian_vault"
-        )
+
+        collection_name = f"vault_{self.current_vault}"
+        try:
+            self.vector_collection = self.chroma_client.get_collection(
+                name=collection_name
+            )
+        except Exception:
+            self.vector_collection = self.chroma_client.get_collection(
+                name="obsidian_vault"
+            )
+
+        # Internal collection cache for fallback lookups
+        self._collection_cache: dict[str, Any] = {}
 
         # Neo4j Setup
         self.neo4j_driver = GraphDatabase.driver(
@@ -135,15 +159,21 @@ class BrainQueryEngine:
         """Split markdown text by headers for local note inspection."""
         return markdown_chunking(content)
 
-    def resolve_note(self, name: str) -> list[Candidate]:
+    def resolve_note(self, name: str, vault: str | None = None) -> list[Candidate]:
         """Return candidate notes that match a basename or relative path fragment."""
         query = name.strip().lower()
         if not query:
             return []
 
+        vault_root = (
+            Path(Config.get_vault_path(vault)).expanduser().resolve()
+            if vault is not None
+            else self.vault_root
+        )
+
         candidates: list[Candidate] = []
-        for file_path in self.vault_root.rglob("*.md"):
-            relative_path = file_path.relative_to(self.vault_root).as_posix()
+        for file_path in vault_root.rglob("*.md"):
+            relative_path = file_path.relative_to(vault_root).as_posix()
             filename = file_path.name
             filename_lower = filename.lower()
             relative_lower = relative_path.lower()
@@ -174,16 +204,36 @@ class BrainQueryEngine:
         candidates.sort(key=lambda item: (item["score"], item["path"]))
         return candidates
 
-    def get_note_by_path(self, path: str) -> Note:
-        absolute_path, relative_path = self._resolve_note_path(path)
+    def get_note_by_path(self, path: str, vault: str | None = None) -> Note:
+        vault_root = (
+            Path(Config.get_vault_path(vault)).expanduser().resolve()
+            if vault is not None
+            else self.vault_root
+        )
+        abs_path = Path(path).expanduser()
+        if abs_path.is_absolute():
+            resolved = abs_path.resolve()
+        else:
+            resolved = (vault_root / path).resolve()
+
+        try:
+            relative_path = resolved.relative_to(vault_root).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                f"Path '{path}' is outside the vault"
+            ) from exc
+
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Note not found: {relative_path}")
+
         return {
             "path": relative_path,
-            "filename": absolute_path.name,
-            "content": absolute_path.read_text(encoding="utf-8"),
+            "filename": resolved.name,
+            "content": resolved.read_text(encoding="utf-8"),
         }
 
-    def read_source(self, source_path: str) -> str:
-        return self.get_note_by_path(source_path)["content"]
+    def read_source(self, source_path: str, vault: str | None = None) -> str:
+        return self.get_note_by_path(source_path, vault=vault)["content"]
 
     def get_note_chunks(self, filename: str) -> list[dict[str, Any]]:
         candidates = self.resolve_note(filename)
@@ -210,7 +260,7 @@ class BrainQueryEngine:
             for index, chunk in enumerate(chunks)
         ]
 
-    def get_related_notes(self, note_ref: str) -> list[str]:
+    def get_related_notes(self, note_ref: str, vault: str | None = None) -> list[str]:
         """
         Fetches notes that are linked to the given note in Neo4j, including tag-based relationships.
 
@@ -218,13 +268,14 @@ class BrainQueryEngine:
         - (:Note)-[:LINKS_TO]->(:Note) for wikilinks
         - (:Note)-[:HAS_TAG]->(:Tag) for tags (avoids O(n²) cartesian join)
         """
+        vault_name = vault or self.current_vault
         with self.neo4j_driver.session() as session:
             query = """
-            MATCH (n:Note)-[:LINKS_TO]-(related:Note)
+            MATCH (n:Note {vault: $vault})-[:LINKS_TO]-(related:Note {vault: $vault})
             WHERE n.path = $note_ref OR n.name = $note_ref
             WITH collect(related) AS linked_notes
 
-            MATCH (n:Note)-[:HAS_TAG]->(t:Tag)<-[:HAS_TAG]-(related:Note)
+            MATCH (n:Note {vault: $vault})-[:HAS_TAG]->(t:Tag)<-[:HAS_TAG]-(related:Note {vault: $vault})
             WHERE n.path = $note_ref OR n.name = $note_ref
             WITH linked_notes, collect(DISTINCT related) AS tag_related
 
@@ -233,7 +284,7 @@ class BrainQueryEngine:
             UNWIND all_related AS related
             RETURN DISTINCT related.name AS name, related.path AS path
             """
-            result = session.run(query, note_ref=note_ref)
+            result = session.run(query, note_ref=note_ref, vault=vault_name)
             return [record["path"] or record["name"] for record in result]
 
     def _score_single_doc(self, query: str, doc: str) -> float | None:
@@ -408,157 +459,6 @@ class BrainQueryEngine:
         filtered_results.sort(key=lambda x: x[0], reverse=True)
         return [(doc, meta) for score, doc, meta in filtered_results]
 
-    def query(
-        self,
-        text: str,
-        n_results: int = SEARCH_N_RESULTS_DEFAULT,
-        expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
-        use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
-        use_mmr: bool = False,
-    ) -> str:
-        """
-        Hybrid Semantic + Graph search with optional caching and MMR reranking.
-
-        Args:
-            text: Search query string
-            n_results: Number of results to return (default: 3)
-            expand_graph: Whether to include related notes via graph (default: True)
-            use_rerank: Whether to apply LLM reranking (default: True)
-            use_mmr: Whether to apply MMR diversity reranking (default: False)
-
-        Returns:
-            Formatted context briefing with source documents and related notes
-        """
-        # Check cache first
-        if self.cache:
-            cached = self.cache.get(text)
-            if cached:
-                logger.info(f"Cache hit for query: {text[:50]}...")
-                return cached["formatted_results"]
-
-        # 1. Preprocess query
-        processed_query = self.query_preprocessor.preprocess(text)
-        if processed_query != text and logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
-
-        # 2. Semantic search
-        fetch_n = n_results * 3 if use_mmr else n_results
-        docs, metadatas = self._search_vectors(processed_query, fetch_n)
-
-        # 3. Deduplicate
-        docs, metadatas = self._deduplicate_results(docs, metadatas)
-
-        # 4. Apply reranking (MMR + LLM)
-        docs, metadatas = self._apply_reranking(
-            docs, metadatas, processed_query, n_results, use_mmr, use_rerank
-        )
-
-        # 5. Build context briefing
-        result = self._build_context(docs, metadatas, expand_graph)
-
-        # Cache results
-        if self.cache:
-            self.cache.set(text, {"formatted_results": result})
-
-        return result
-
-    def _search_vectors(
-        self, query: str, n_results: int
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """
-        Perform semantic search on vector store.
-
-        Args:
-            query: Preprocessed search query
-            n_results: Number of results to fetch
-
-        Returns:
-            Tuple of (documents, metadatas)
-        """
-        embedding = self.get_embedding(query)
-        results = self.vector_collection.query(
-            query_embeddings=[embedding], n_results=n_results
-        )
-        return results["documents"][0], results["metadatas"][0]
-
-    def _apply_reranking(
-        self,
-        docs: list[str],
-        metadatas: list[dict[str, Any]],
-        query: str,
-        n_results: int,
-        use_mmr: bool,
-        use_rerank: bool,
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """
-        Apply MMR and LLM reranking to search results.
-
-        Args:
-            docs: List of document contents
-            metadatas: List of metadata dicts
-            query: Search query string
-            n_results: Number of results to return
-            use_mmr: Whether to apply MMR diversity reranking
-            use_rerank: Whether to apply LLM reranking
-
-        Returns:
-            Tuple of (reranked_docs, reranked_metadatas)
-        """
-        if not docs:
-            return docs, metadatas
-
-        # MMR Reranking (diversity-focused)
-        if use_mmr:
-            logger.info("Applying diversity reranking...")
-            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
-
-        # LLM Reranking (relevance-focused)
-        if use_rerank and Config.ENABLE_RERANK:
-            reranked = self.rerank_results(query, list(zip(docs, metadatas)))
-            if reranked:
-                docs, metadatas = zip(*reranked)
-                docs = list(docs[:n_results])
-                metadatas = list(metadatas[:n_results])
-
-        return docs, metadatas
-
-    def _build_context(
-        self,
-        docs: list[str],
-        metadatas: list[dict[str, Any]],
-        expand_graph: bool,
-    ) -> str:
-        """
-        Build context briefing with source documents and optional graph expansion.
-
-        Args:
-            docs: List of document contents
-            metadatas: List of metadata dicts
-            expand_graph: Whether to include related notes via graph
-
-        Returns:
-            Formatted context briefing string
-        """
-        context_briefing = []
-        seen_notes = set()
-
-        for doc, meta in zip(docs, metadatas):
-            note_label = meta.get("path") or meta["filename"]
-            context_briefing.append(f"--- Source: {note_label} ---\n{doc}")
-            seen_notes.add(note_label)
-
-            # Graph Expansion
-            if expand_graph:
-                related = self.get_related_notes(note_label)
-                for rel_note in related:
-                    if rel_note not in seen_notes:
-                        context_briefing.append(
-                            f"--- Related Note: {rel_note} (Linked via {note_label}) ---"
-                        )
-                        seen_notes.add(rel_note)
-
-        return "\n\n".join(context_briefing)
-
     def _deduplicate_results(
         self, docs: list[str], metadatas: list[dict[str, Any]]
     ) -> tuple[list[str], list[dict[str, Any]]]:
@@ -625,6 +525,206 @@ class BrainQueryEngine:
 
         docs_result, metas_result = zip(*diversified)
         return list(docs_result), list(metas_result)
+
+    def _get_fallback_chain(self) -> list[str]:
+        chain: list[str] = [self.current_vault]
+        if self.vault_config:
+            for lv in self.vault_config.linked_vaults:
+                if lv not in chain:
+                    chain.append(lv)
+        if "general" not in chain:
+            chain.append("general")
+        return chain
+
+    def _get_vault_collection(self, vault_name: str) -> Any:
+        if vault_name in self._collection_cache:
+            return self._collection_cache[vault_name]
+        try:
+            collection = self.chroma_client.get_collection(f"vault_{vault_name}")
+            self._collection_cache[vault_name] = collection
+            return collection
+        except Exception:
+            return None
+
+    def _search_vectors_in_collection(
+        self, query: str, collection: Any, n_results: int
+    ) -> tuple[list[str], list[dict[str, Any]], str]:
+        embedding = self.get_embedding(query)
+        results = collection.query(
+            query_embeddings=[embedding], n_results=n_results
+        )
+        docs = results["documents"][0]
+        metadatas = results["metadatas"][0]
+        return docs, metadatas, ""
+
+    def query(
+        self,
+        text: str,
+        n_results: int = SEARCH_N_RESULTS_DEFAULT,
+        expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
+        use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
+        use_mmr: bool = False,
+        vault_override: str | None = None,
+    ) -> str:
+        vault_name = vault_override or self.current_vault
+
+        if self.cache:
+            cache_key = f"{vault_name}:{text}"
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.info(f"Cache hit for query: {text[:50]}...")
+                return cached["formatted_results"]
+
+        processed_query = self.query_preprocessor.preprocess(text)
+        if processed_query != text and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
+
+        fallback_chain = self._get_fallback_chain()
+        if vault_override and vault_override not in fallback_chain:
+            fallback_chain = [vault_override] + [v for v in fallback_chain if v != vault_override]
+
+        all_docs: list[str] = []
+        all_metas: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        searched_vaults: set[str] = set()
+
+        fetch_n = n_results * 3 if use_mmr else n_results
+
+        for vname in fallback_chain:
+            if len(all_docs) >= n_results:
+                break
+            if vname in searched_vaults:
+                continue
+            searched_vaults.add(vname)
+
+            collection = self._get_vault_collection(vname)
+            if collection is None:
+                logger.debug("Collection not found for vault '%s', skipping", vname)
+                continue
+
+            remaining = n_results - len(all_docs)
+            try:
+                docs, metadatas, _ = self._search_vectors_in_collection(
+                    processed_query, collection, remaining + 5
+                )
+            except Exception as e:
+                logger.warning("Search failed for vault '%s': %s", vname, e)
+                continue
+
+            for doc, meta in zip(docs, metadatas):
+                note_path = meta.get("path") or meta.get("filename", "")
+                if note_path not in seen_paths:
+                    meta = dict(meta)
+                    meta["vault_source"] = vname
+                    seen_paths.add(note_path)
+                    all_docs.append(doc)
+                    all_metas.append(meta)
+                    if len(all_docs) >= n_results:
+                        break
+
+        docs, metadatas = all_docs[:n_results], all_metas[:n_results]
+
+        if use_mmr:
+            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
+        if use_rerank and Config.ENABLE_RERANK:
+            reranked = self.rerank_results(processed_query, list(zip(docs, metadatas)))
+            if reranked:
+                docs, metadatas = zip(*reranked)
+                docs = list(docs[:n_results])
+                metadatas = list(metadatas[:n_results])
+
+        result = self._build_context_multi_vault(docs, metadatas, expand_graph)
+
+        if self.cache:
+            cache_key = f"{vault_name}:{text}"
+            self.cache.set(cache_key, {"formatted_results": result})
+
+        return result
+
+    def _build_context_multi_vault(
+        self,
+        docs: list[str],
+        metadatas: list[dict[str, Any]],
+        expand_graph: bool,
+    ) -> str:
+        context_briefing = []
+        seen_notes = set()
+
+        for doc, meta in zip(docs, metadatas):
+            note_label = meta.get("path") or meta["filename"]
+            vault_source = meta.get("vault_source", "?")
+            context_briefing.append(f"--- Source [{vault_source}]: {note_label} ---\n{doc}")
+            seen_notes.add(note_label)
+
+            if expand_graph:
+                related = self.get_related_notes(note_label)
+                for rel_note in related:
+                    if rel_note not in seen_notes:
+                        context_briefing.append(
+                            f"--- Related Note: {rel_note} (Linked via {note_label}) ---"
+                        )
+                        seen_notes.add(rel_note)
+
+        return "\n\n".join(context_briefing)
+
+    def _search_vectors(
+        self, query: str, n_results: int
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        embedding = self.get_embedding(query)
+        results = self.vector_collection.query(
+            query_embeddings=[embedding], n_results=n_results
+        )
+        return results["documents"][0], results["metadatas"][0]
+
+    def _apply_reranking(
+        self,
+        docs: list[str],
+        metadatas: list[dict[str, Any]],
+        query: str,
+        n_results: int,
+        use_mmr: bool,
+        use_rerank: bool,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        if not docs:
+            return docs, metadatas
+
+        if use_mmr:
+            logger.info("Applying diversity reranking...")
+            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
+
+        if use_rerank and Config.ENABLE_RERANK:
+            reranked = self.rerank_results(query, list(zip(docs, metadatas)))
+            if reranked:
+                docs, metadatas = zip(*reranked)
+                docs = list(docs[:n_results])
+                metadatas = list(metadatas[:n_results])
+
+        return docs, metadatas
+
+    def _build_context(
+        self,
+        docs: list[str],
+        metadatas: list[dict[str, Any]],
+        expand_graph: bool,
+    ) -> str:
+        context_briefing = []
+        seen_notes = set()
+
+        for doc, meta in zip(docs, metadatas):
+            note_label = meta.get("path") or meta["filename"]
+            context_briefing.append(f"--- Source: {note_label} ---\n{doc}")
+            seen_notes.add(note_label)
+
+            if expand_graph:
+                related = self.get_related_notes(note_label)
+                for rel_note in related:
+                    if rel_note not in seen_notes:
+                        context_briefing.append(
+                            f"--- Related Note: {rel_note} (Linked via {note_label}) ---"
+                        )
+                        seen_notes.add(rel_note)
+
+        return "\n\n".join(context_briefing)
 
 
 if __name__ == "__main__":

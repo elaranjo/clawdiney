@@ -1,3 +1,4 @@
+import argparse
 import logging
 import re
 from pathlib import Path
@@ -10,7 +11,7 @@ from neo4j import GraphDatabase
 
 from .chunking import Chunk, chunk_text
 from .config import Config
-from .constants import CHUNK_SIZE_DEFAULT
+from .constants import CHUNK_SIZE_DEFAULT, COLLECTION_PREFIX
 from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,12 @@ def create_chroma_client() -> chromadb.HttpClient:
     return chromadb.HttpClient(host=Config.CHROMA_HOST, port=Config.CHROMA_PORT)
 
 
-def create_collection(client: chromadb.HttpClient) -> chromadb.Collection:
+def create_collection(
+    client: chromadb.HttpClient, vault_name: str | None = None
+) -> chromadb.Collection:
+    name = f"{COLLECTION_PREFIX}{vault_name}" if vault_name else "obsidian_vault"
     return client.get_or_create_collection(
-        name="obsidian_vault",
+        name=name,
         embedding_function=OllamaEmbedding(model_name=Config.MODEL_NAME),
     )
 
@@ -99,7 +103,7 @@ def build_note_record(
 
 
 def build_chunk_payload(
-    note_record: NoteRecord,
+    note_record: NoteRecord, vault_name: str = ""
 ) -> tuple[list[str], list[str], list[dict[str, Any]]]:
     ids = []
     documents = []
@@ -114,6 +118,8 @@ def build_chunk_payload(
             "chunk_index": index,
             "chunk_strategy": Config.CHUNKING_STRATEGY,
         }
+        if vault_name:
+            metadata["vault"] = vault_name
         if note_record["tags"]:
             metadata["tags"] = note_record["tags"]
 
@@ -127,12 +133,14 @@ def build_chunk_payload(
 
 
 def index_note_records(
-    collection: chromadb.Collection, note_records: list[NoteRecord]
+    collection: chromadb.Collection,
+    note_records: list[NoteRecord],
+    vault_name: str = "",
 ) -> int:
     indexed_chunks = 0
 
     for note_record in note_records:
-        ids, documents, metadatas = build_chunk_payload(note_record)
+        ids, documents, metadatas = build_chunk_payload(note_record, vault_name=vault_name)
         if not ids:
             continue
         collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
@@ -142,7 +150,10 @@ def index_note_records(
 
 
 def sync_graph(
-    neo4j_driver: Any, note_records: list[NoteRecord], incremental: bool = False
+    neo4j_driver: Any,
+    note_records: list[NoteRecord],
+    incremental: bool = False,
+    vault_name: str = "",
 ) -> None:
     """
     Sync notes to Neo4j graph with transactional guarantees.
@@ -165,7 +176,7 @@ def sync_graph(
             tx.run(
                 """
                 UNWIND $files AS file
-                MERGE (n:Note {path: file.path})
+                MERGE (n:Note {path: file.path, vault: file.vault})
                 SET n.name = file.name,
                     n.content = file.content,
                     n.last_indexed = timestamp(),
@@ -177,6 +188,7 @@ def sync_graph(
                         "path": note["path"],
                         "content": note["content"],
                         "tags": note["tags"],
+                        "vault": vault_name,
                     }
                     for note in note_records
                 ],
@@ -198,8 +210,14 @@ def sync_graph(
                     paths=paths,
                 )
             else:
-                # 2b. FULL SYNC MODE: Delete all relationships and orphan Tag nodes
-                tx.run("MATCH ()-[r:LINKS_TO|HAS_TAG]->() DELETE r")
+                # 2b. FULL SYNC MODE: Delete relationships and orphan Tag nodes
+                if vault_name:
+                    tx.run(
+                        "MATCH (n:Note {vault: $vault_name})-[r:LINKS_TO|HAS_TAG]->() DELETE r",
+                        vault_name=vault_name,
+                    )
+                else:
+                    tx.run("MATCH ()-[r:LINKS_TO|HAS_TAG]->() DELETE r")
                 tx.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
 
             # 3. Create LINKS_TO relationships using pre-extracted wikilinks (O(n))
@@ -265,12 +283,30 @@ def index_vault(
     neo4j_driver: Any | None = None,
     strategy: str | None = None,
 ) -> dict[str, Any]:
+    return _index_vault_inner(
+        vault_root=vault_root,
+        collection=collection,
+        neo4j_driver=neo4j_driver,
+        strategy=strategy,
+        vault_name="",
+    )
+
+
+def _index_vault_inner(
+    vault_root: Path | str | None = None,
+    collection: chromadb.Collection | None = None,
+    neo4j_driver: Any | None = None,
+    strategy: str | None = None,
+    vault_name: str = "",
+) -> dict[str, Any]:
     vault_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
     own_collection = collection is None
     own_driver = neo4j_driver is None
 
     if own_collection:
-        collection = create_collection(create_chroma_client())
+        collection = create_collection(
+            create_chroma_client(), vault_name=vault_name or None
+        )
     if own_driver:
         neo4j_driver = create_neo4j_driver()
 
@@ -297,28 +333,84 @@ def index_vault(
             except Exception as exc:
                 logger.error(f"Error processing {file_path}: {exc}")
 
-        indexed_chunks = index_note_records(collection, note_records)
-        sync_graph(neo4j_driver, note_records)
+        indexed_chunks = index_note_records(
+            collection, note_records, vault_name=vault_name
+        )
+        sync_graph(
+            neo4j_driver, note_records, vault_name=vault_name
+        )
 
         return {
             "vault_root": str(vault_root),
             "total_files": total_files,
             "processed_files": processed_files,
             "indexed_chunks": indexed_chunks,
+            "vault_name": vault_name or None,
         }
     finally:
         if own_driver and neo4j_driver is not None:
             neo4j_driver.close()
 
 
-def main() -> dict[str, Any]:
-    setup_logging()
-    logger.info(f"Starting indexing of files from {Config.VAULT_PATH}")
-    summary = index_vault()
-    logger.info(
-        f"Indexing complete: {summary['processed_files']}/{summary['total_files']} files processed, "
-        f"{summary['indexed_chunks']} chunks indexed"
+def index_named_vault(
+    vault_name: str,
+    collection: chromadb.Collection | None = None,
+    neo4j_driver: Any | None = None,
+    strategy: str | None = None,
+) -> dict[str, Any]:
+    vault_path = Config.get_vault_path(vault_name)
+    return _index_vault_inner(
+        vault_root=vault_path,
+        collection=collection,
+        neo4j_driver=neo4j_driver,
+        strategy=strategy,
+        vault_name=vault_name,
     )
+
+
+def index_all_vaults(
+    collection: chromadb.Collection | None = None,
+    neo4j_driver: Any | None = None,
+    strategy: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    for vault_name, vault_path in Config.get_all_vaults().items():
+        logger.info(f"Indexing vault '{vault_name}' from {vault_path}")
+        results[vault_name] = index_named_vault(
+            vault_name,
+            collection=collection,
+            neo4j_driver=neo4j_driver,
+            strategy=strategy,
+        )
+    return results
+
+
+def main() -> dict[str, Any] | dict[str, dict[str, Any]]:
+    setup_logging()
+    parser = argparse.ArgumentParser(description="Index Obsidian vault(s) into ChromaDB and Neo4j")
+    parser.add_argument("--vault", type=str, default=None, help="Index only a specific vault by name")
+    args = parser.parse_args()
+
+    if args.vault:
+        logger.info(f"Indexing vault '{args.vault}' from {Config.get_vault_path(args.vault)}")
+        summary = index_named_vault(args.vault)
+        logger.info(
+            f"Indexing complete: {summary['processed_files']}/{summary['total_files']} files processed, "
+            f"{summary['indexed_chunks']} chunks indexed"
+        )
+    elif Config._is_multi_vault():
+        logger.info(f"Indexing all configured vaults: {list(Config.get_all_vaults().keys())}")
+        summaries = index_all_vaults()
+        total_all = sum(s["indexed_chunks"] for s in summaries.values())
+        logger.info(f"All vaults indexed: {total_all} total chunks indexed")
+        return summaries
+    else:
+        logger.info(f"Starting indexing of files from {Config.VAULT_PATH}")
+        summary = _index_vault_inner()
+        logger.info(
+            f"Indexing complete: {summary['processed_files']}/{summary['total_files']} files processed, "
+            f"{summary['indexed_chunks']} chunks indexed"
+        )
     return summary
 
 

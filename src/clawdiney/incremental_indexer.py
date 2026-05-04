@@ -18,6 +18,7 @@ from neo4j import GraphDatabase
 
 from .config import Config
 from .indexer import (
+    build_chunk_payload,
     build_note_record,
     discover_vault_files,
     sync_graph,
@@ -168,6 +169,7 @@ class IncrementalIndexer:
         collection: chromadb.Collection,
         neo4j_driver: GraphDatabase,
         strategy: str | None = None,
+        vault_name: str = "",
     ) -> bool:
         """
         Sync a single file to both ChromaDB and Neo4j.
@@ -184,14 +186,12 @@ class IncrementalIndexer:
                 return False
 
             # Index in ChromaDB
-            from brain_indexer import build_chunk_payload
-
-            ids, documents, metadatas = build_chunk_payload(note_record)
+            ids, documents, metadatas = build_chunk_payload(note_record, vault_name=vault_name)
             if ids:
                 collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
             # Sync to Neo4j (single note, incremental mode)
-            sync_graph(neo4j_driver, [note_record], incremental=True)
+            sync_graph(neo4j_driver, [note_record], incremental=True, vault_name=vault_name)
 
             # Update state
             file_hash = self._compute_file_hash(file_path)
@@ -241,6 +241,7 @@ def incremental_sync(
     neo4j_driver: Any | None = None,
     strategy: str | None = None,
     force_full: bool = False,
+    vault_name: str = "",
 ) -> dict[str, Any]:
     """
     Perform incremental sync of the vault.
@@ -251,23 +252,27 @@ def incremental_sync(
         neo4j_driver: Neo4j driver (created if None)
         strategy: Chunking strategy
         force_full: If True, perform full sync ignoring state
+        vault_name: Vault name for multi-vault support. If provided, uses
+                    Config.get_vault_path(vault_name) as vault_root (overrides vault_root).
 
     Returns:
         Summary dict with sync statistics
     """
-    from brain_indexer import (
+    from .indexer import (
         create_chroma_client,
         create_collection,
         create_neo4j_driver,
     )
 
+    if vault_name:
+        vault_root = Config.get_vault_path(vault_name)
     vault_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
     own_collection = collection is None
     own_driver = neo4j_driver is None
 
     if own_collection:
         chroma_client = create_chroma_client()
-        collection = create_collection(chroma_client)
+        collection = create_collection(chroma_client, vault_name=vault_name or None)
     if own_driver:
         neo4j_driver = create_neo4j_driver()
 
@@ -291,7 +296,7 @@ def incremental_sync(
     indexed_chunks = 0
 
     for file_path in changes:
-        if indexer.sync_file(file_path, collection, neo4j_driver, strategy=strategy):
+        if indexer.sync_file(file_path, collection, neo4j_driver, strategy=strategy, vault_name=vault_name):
             synced_files += 1
             # Count chunks
             note_record = build_note_record(file_path, vault_root, strategy=strategy)
@@ -315,13 +320,16 @@ def incremental_sync(
     with neo4j_driver.session() as session:
         session.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
 
-    return {
+    result = {
         "vault_root": str(vault_root),
         "sync_type": "full" if is_full_sync else "incremental",
         "files_synced": synced_files,
         "files_deleted": len(deleted),
         "indexed_chunks": indexed_chunks,
     }
+    if vault_name:
+        result["vault_name"] = vault_name
+    return result
 
 
 def full_sync(
@@ -338,3 +346,22 @@ def full_sync(
         strategy=strategy,
         force_full=True,
     )
+
+
+def incremental_sync_all_vaults(
+    collection: chromadb.Collection | None = None,
+    neo4j_driver: Any | None = None,
+    strategy: str | None = None,
+    force_full: bool = False,
+) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    for vault_name in Config.get_all_vaults():
+        logger.info(f"Incremental sync for vault '{vault_name}'")
+        results[vault_name] = incremental_sync(
+            collection=collection,
+            neo4j_driver=neo4j_driver,
+            strategy=strategy,
+            force_full=force_full,
+            vault_name=vault_name,
+        )
+    return results

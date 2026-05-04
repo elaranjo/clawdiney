@@ -34,8 +34,10 @@ class VaultWriter:
         vault_root: Path,
         collection: chromadb.Collection | None = None,
         neo4j_driver: GraphDatabase | None = None,
+        vault_name: str | None = None,
     ):
         self.vault_root = vault_root
+        self.vault_name = vault_name
         self.indexer = IncrementalIndexer(vault_root)
         self._collection = collection
         self._neo4j_driver = neo4j_driver
@@ -139,7 +141,7 @@ class VaultWriter:
             collection = self._get_collection()
             driver = self._get_neo4j_driver()
 
-            if self.indexer.sync_file(absolute_path, collection, driver):
+            if self.indexer.sync_file(absolute_path, collection, driver, vault_name=self.vault_name or ""):
                 chunks_indexed = len(
                     self.indexer._get_all_vault_files().get(absolute_path, "")
                 )
@@ -247,23 +249,25 @@ class VaultWriter:
 
 # Global singleton for MCP server
 _writer_lock = None
-_writer_instance = None
+_writer_instances: dict[str, VaultWriter] = {}
 
 
 def get_writer(
     vault_root: Path | None = None,
     collection: chromadb.Collection | None = None,
     neo4j_driver: GraphDatabase | None = None,
+    vault_name: str | None = None,
 ) -> VaultWriter:
     """
     Thread-safe singleton for VaultWriter.
 
     Args:
-        vault_root: Optional vault path (uses Config.VAULT_PATH if None)
+        vault_root: Optional vault path (uses Config.VAULT_PATH if vault_root and vault_name are None)
         collection: Optional ChromaDB collection (created if None)
         neo4j_driver: Optional Neo4j driver (created if None)
+        vault_name: Optional vault name for multi-vault mode. Overrides vault_root.
     """
-    global _writer_lock, _writer_instance
+    global _writer_lock, _writer_instances
 
     import threading
 
@@ -271,11 +275,22 @@ def get_writer(
         _writer_lock = threading.Lock()
 
     with _writer_lock:
-        if _writer_instance is None:
-            from config import Config
+        from .config import Config
 
-            vault_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
-            _writer_instance = VaultWriter(vault_root, collection, neo4j_driver)
-            logger.info("VaultWriter initialized")
+        if vault_name:
+            key = vault_name
+            resolved_root = Config.get_vault_path(vault_name)
+        else:
+            key = str(vault_root) if vault_root else "__default__"
+            if vault_root is None and Config._is_multi_vault():
+                vault_name = Config.get_default_vault()
+                key = vault_name
+                resolved_root = Config.get_vault_path(vault_name)
+            else:
+                resolved_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
 
-        return _writer_instance
+        if key not in _writer_instances:
+            _writer_instances[key] = VaultWriter(resolved_root, collection, neo4j_driver, vault_name=vault_name)
+            logger.info(f"VaultWriter initialized for vault: {key}")
+
+        return _writer_instances[key]

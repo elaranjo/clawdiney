@@ -29,6 +29,12 @@ Thumbs.db
 *.log
 logs/
 
+# Agent artifacts (planning, evidence, drafts)
+.sisyphus/
+
+# Backups
+.env.backup*
+
 # IDE
 .vscode/
 .idea/

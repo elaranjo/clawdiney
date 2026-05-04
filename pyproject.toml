@@ -45,6 +45,7 @@ dev = [
 [project.scripts]
 clawdiney-index = "clawdiney.indexer:main"
 clawdiney-mcp = "clawdiney.mcp_server:main"
+clawdiney = "clawdiney.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
