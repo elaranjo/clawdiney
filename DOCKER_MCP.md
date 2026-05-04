@@ -45,6 +45,8 @@ sudo systemctl restart ollama
 # O Docker Desktop já resolve host.docker.internal automaticamente
 ```
 
+> Nota: `OLLAMA_HOST=host.docker.internal` é obrigatório para que o container Docker alcance o Ollama rodando no host.
+
 ## Executando
 
 ### Iniciar todos os serviços
@@ -54,15 +56,15 @@ docker compose up -d
 ```
 
 Isso iniciará:
-- **Neo4j** (porta 7474 browser, 7687 bolt)
-- **ChromaDB** (porta 8000)
+- **Neo4j** (porta 7476 browser, 7689 bolt — portas externas mapeadas para 7474/7687 internas)
+- **ChromaDB** (porta 8001)
 - **MCP Server** (porta 8006)
 
 ### Verificar status
 
 ```bash
 docker compose ps
-docker compose logs -f brain-mcp-server
+docker compose logs -f clawdiney-mcp-server
 ```
 
 ### Parar serviços
@@ -73,26 +75,7 @@ docker compose down
 
 ## Integração com Claude Code
 
-Adicione ao seu `~/.claude.json`:
-
-```json
-{
-  "projects": {
-    "/caminho/para/seu/projeto": {
-      "mcpServers": {
-        "clawdiney": {
-          "command": "docker",
-          "args": ["exec", "-i", "clawdiney-mcp-server", "python", "/app/mcp_wrapper.py"]
-        }
-      }
-    }
-  }
-}
-```
-
-### Alternativa: Streamable HTTP
-
-Para usar via HTTP (streamable-http):
+O MCP server usa SSE (Server-Sent Events) na porta 8006.
 
 ```json
 {
@@ -114,7 +97,7 @@ Para usar via HTTP (streamable-http):
 
 ```bash
 # Ver logs
-docker compose logs brain-mcp-server
+docker compose logs clawdiney-mcp-server
 
 # Verificar se dependências estão up
 docker compose ps neo4j chromadb
@@ -123,12 +106,27 @@ docker compose ps neo4j chromadb
 ### Erro de conexão com Ollama
 
 ```bash
-# Testar conexão do container
-docker compose exec brain-mcp-server curl http://host.docker.internal:11434/api/tags
-
 # Se falhar, verificar se Ollama está rodando
 ollama list
 ```
+
+### Container em loop de restart
+
+Se o container `clawdiney-mcp-server` estiver reiniciando repetidamente:
+
+```bash
+# Ver logs para diagnóstico
+docker compose -f docker/docker-compose.yml logs mcp-server
+
+# Verificar status do container
+docker compose -f docker/docker-compose.yml ps mcp-server
+```
+
+Causa: O transporte `stdio` não é compatível com containers Docker em modo detached (o stdin fechado causa EOF, que encerra o processo).
+
+Solução: O container foi configurado para usar transporte `sse` (porta 8006). Certifique-se de que:
+- `MCP_TRANSPORT=sse` está definido no `docker-compose.yml`
+- `OLLAMA_HOST=host.docker.internal` está definido (necessário para embeddings)
 
 ### Erro de conexão com Neo4j/ChromaDB
 
@@ -136,7 +134,7 @@ Verifique se as redes Docker estão corretas:
 
 ```bash
 docker network ls
-docker network inspect clawdiney_brain-network
+docker network inspect docker_brain-network
 ```
 
 ## Arquitetura
@@ -158,11 +156,11 @@ docker network inspect clawdiney_brain-network
 
 ```bash
 # Reindexar o vault manualmente
-docker compose exec brain-mcp-server python /app/brain_indexer.py
+docker compose exec clawdiney-mcp-server python -m clawdiney.indexer
 
 # Acessar shell do container
-docker compose exec brain-mcp-server bash
+docker compose exec clawdiney-mcp-server bash
 
 # Ver volume do vault
-docker compose exec brain-mcp-server ls -la /vault
+docker compose exec clawdiney-mcp-server ls -la /vault
 ```

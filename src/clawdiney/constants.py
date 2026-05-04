@@ -31,3 +31,9 @@ CHROMADB_CPU_LIMIT = "1.0"
 SEARCH_N_RESULTS_DEFAULT = 3  # Default number of search results
 SEARCH_EXPAND_GRAPH_DEFAULT = True  # Whether to expand graph by default
 SEARCH_USE_RERANK_DEFAULT = True  # Whether to use reranking by default
+
+VAULT_ID_GENERAL = "general"
+VAULT_ID_PROJECTS = "projects"
+VAULT_ID_PERSONAL = "personal"
+COLLECTION_PREFIX = "vault_"
+VAULT_CONFIG_FILENAME = "clawdiney.toml"

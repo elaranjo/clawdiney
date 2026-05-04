@@ -1,4 +1,6 @@
+import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -8,6 +10,9 @@ from .constants import (
     CHUNK_SIZE_DEFAULT,
     RERANK_THRESHOLD_DEFAULT,
 )
+from .vault_config import load_vault_config, validate_linked_vaults, VaultConfig
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -52,6 +57,107 @@ class Config:
     )
     CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
     CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+
+    @classmethod
+    def _is_multi_vault(cls) -> bool:
+        """Check if multi-vault mode is enabled via VAULTS or VAULTS_DIR env var."""
+        return os.getenv("VAULTS") is not None or os.getenv("VAULTS_DIR") is not None
+
+    @classmethod
+    def _discover_vaults_from_dir(cls) -> dict[str, Path]:
+        vaults_dir = os.getenv("VAULTS_DIR")
+        if not vaults_dir:
+            logger.warning("VAULTS_DIR is set but empty")
+            return {}
+        vaults_path = Path(vaults_dir).expanduser().resolve()
+        if not vaults_path.is_dir():
+            logger.warning("VAULTS_DIR '%s' is not a directory", vaults_dir)
+            return {}
+        discovered: dict[str, Path] = {}
+        configs: dict[str, VaultConfig] = {}
+        for entry in sorted(vaults_path.iterdir()):
+            if not entry.is_dir():
+                continue
+            toml_path = entry / "clawdiney.toml"
+            if not toml_path.exists():
+                continue
+            try:
+                vc = load_vault_config(entry)
+            except (ValueError, Exception) as exc:
+                logger.warning("Skipping '%s': %s", entry.name, exc)
+                continue
+            if vc.id in discovered:
+                logger.warning(
+                    "Duplicate vault id '%s' in '%s', skipping", vc.id, entry.name
+                )
+                continue
+            discovered[vc.id] = entry
+            configs[vc.id] = vc
+        if configs:
+            try:
+                validate_linked_vaults(configs)
+            except ValueError as exc:
+                logger.warning("linked_vaults validation failed: %s", exc)
+                return {}
+        return discovered
+
+    @classmethod
+    def get_vault_path(cls, vault_id: str) -> Path:
+        if os.getenv("VAULTS_DIR"):
+            vaults = cls._discover_vaults_from_dir()
+            if vault_id in vaults:
+                return vaults[vault_id]
+            raise KeyError(
+                f"Vault '{vault_id}' not found in VAULTS_DIR. "
+                f"Available: {list(vaults.keys())}"
+            )
+        if cls._is_multi_vault():
+            env_key = f"VAULT_{vault_id.upper()}_PATH"
+            raw = os.getenv(env_key)
+            if raw is None:
+                raise KeyError(
+                    f"Vault '{vault_id}' not configured. "
+                    f"Set {env_key} in .env or environment."
+                )
+            return Path(os.path.expanduser(raw))
+        return Path(cls.VAULT_PATH)
+
+    @classmethod
+    def get_all_vaults(cls) -> dict[str, Path]:
+        vaults_dir = os.getenv("VAULTS_DIR")
+        if vaults_dir:
+            if os.getenv("VAULTS"):
+                logger.warning(
+                    "Both VAULTS and VAULTS_DIR are set. Using VAULTS_DIR."
+                )
+            return cls._discover_vaults_from_dir()
+        if not cls._is_multi_vault():
+            return {"default": Path(cls.VAULT_PATH)}
+        vaults: dict[str, Path] = {}
+        for vid in os.getenv("VAULTS", "").split(","):
+            vid = vid.strip()
+            if vid:
+                vaults[vid] = cls.get_vault_path(vid)
+        return vaults
+
+    @classmethod
+    def get_default_vault(cls) -> str:
+        vaults_dir = os.getenv("VAULTS_DIR")
+        if vaults_dir:
+            vaults = cls._discover_vaults_from_dir()
+            if not vaults:
+                return "default"
+            default = os.getenv("MCP_DEFAULT_VAULT")
+            if default and default in vaults:
+                return default
+            return next(iter(vaults))
+        if not cls._is_multi_vault():
+            return "default"
+        default = os.getenv("MCP_DEFAULT_VAULT")
+        if default:
+            return default
+        first = os.getenv("VAULTS", "").split(",")[0].strip()
+        return first or "default"
 
     # Model
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
