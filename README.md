@@ -416,8 +416,13 @@ The agent has immediate access to new/modified notes after sync completes.
 
 ### Neo4j connection error / Container restarting
 - Check if the container is running: `docker compose -f docker/docker-compose.yml ps neo4j`
-- If `neo4j_data/` has permission issues (UID 7474 ownership): `sudo chown -R 7474:7474 neo4j_data && docker compose restart neo4j`
-- If the problem persists, delete the data: `sudo rm -rf neo4j_data && docker compose restart neo4j`
+- The Neo4j container uses a **Docker named volume** (`clawdiney-neo4j-data`) instead of a bind mount. This avoids filesystem permission issues (chown) common with Docker Desktop.
+- If the volume is corrupted, you can recreate it (data is fully rebuildable via `python -m clawdiney.indexer`):
+  1. `docker compose -f docker/docker-compose.yml down neo4j`
+  2. `docker volume rm docker_clawdiney-neo4j-data`
+  3. `docker compose -f docker/docker-compose.yml up -d neo4j`
+  4. Reindex: `OLLAMA_HOST= ./venv/bin/python3 -m clawdiney.indexer`
+- **⚠️ WARNING**: `docker compose down -v` will destroy ALL volumes (Neo4j, ChromaDB, Redis). Use `down` without `-v` to preserve data.
 
 ### ChromaDB connection error
 - Check logs: `docker compose -f docker/docker-compose.yml logs chromadb`

@@ -130,6 +130,26 @@ Solução: O container foi configurado para usar transporte `sse` (porta 8006). 
 
 ### Erro de conexão com Neo4j/ChromaDB
 
+**Neo4j (named volume):**
+O Neo4j usa um Docker named volume (`clawdiney-neo4j-data`) em vez de bind mount para evitar problemas de permissão com Docker Desktop.
+
+```bash
+# Verificar se o volume existe
+docker volume ls | grep clawdiney-neo4j-data
+
+# Verificar status do container
+docker compose -f docker/docker-compose.yml ps neo4j
+
+# Se o volume precisar ser recriado (dados são reconstruídos pelo indexer):
+docker compose -f docker/docker-compose.yml down neo4j
+docker volume rm docker_clawdiney-neo4j-data
+docker compose -f docker/docker-compose.yml up -d neo4j
+OLLAMA_HOST= ./venv/bin/python3 -m clawdiney.indexer
+```
+
+**⚠️ WARNING**: `docker compose down -v` destrói TODOS os volumes (Neo4j, ChromaDB, Redis). Use `down` sem `-v` para preservar dados.
+
+**ChromaDB/Redis (bind mounts):**
 Verifique se as redes Docker estão corretas:
 
 ```bash
