@@ -10,7 +10,7 @@ from .constants import (
     CHUNK_SIZE_DEFAULT,
     RERANK_THRESHOLD_DEFAULT,
 )
-from .vault_config import load_vault_config, validate_linked_vaults, VaultConfig
+from .vault_config import VaultConfig, load_vault_config, validate_linked_vaults
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +127,7 @@ class Config:
         vaults_dir = os.getenv("VAULTS_DIR")
         if vaults_dir:
             if os.getenv("VAULTS"):
-                logger.warning(
-                    "Both VAULTS and VAULTS_DIR are set. Using VAULTS_DIR."
-                )
+                logger.warning("Both VAULTS and VAULTS_DIR are set. Using VAULTS_DIR.")
             return cls._discover_vaults_from_dir()
         if not cls._is_multi_vault():
             return {"default": Path(cls.VAULT_PATH)}

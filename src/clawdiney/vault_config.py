@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
 
 import tomli
 
@@ -12,9 +11,9 @@ class VaultConfig:
     id: str
     name: str
     description: str = ""
-    linked_vaults: List[str] = field(default_factory=list)
-    include_patterns: List[str] = field(default_factory=list)
-    exclude_patterns: List[str] = field(default_factory=list)
+    linked_vaults: list[str] = field(default_factory=list)
+    include_patterns: list[str] = field(default_factory=list)
+    exclude_patterns: list[str] = field(default_factory=list)
 
 
 def load_vault_config(vault_root: Path) -> VaultConfig:
@@ -50,28 +49,28 @@ def validate_linked_vaults(configs: dict[str, VaultConfig]) -> None:
                     f"Vault '{vault_id}' references linked_vault '{linked_id}' which does not exist"
                 )
 
-    WHITE = 0
-    GRAY = 1
-    BLACK = 2
-    color: dict[str, int] = {vid: WHITE for vid in configs}
+    white = 0
+    gray = 1
+    black = 2
+    color: dict[str, int] = {vid: white for vid in configs}
 
     def dfs(vault_id: str, path: list[str]) -> None:
-        color[vault_id] = GRAY
+        color[vault_id] = gray
         path.append(vault_id)
         for neighbor in configs[vault_id].linked_vaults:
             if neighbor not in configs:
                 continue
-            if color[neighbor] == GRAY:
+            if color[neighbor] == gray:
                 cycle_start = path.index(neighbor)
                 cycle = path[cycle_start:] + [neighbor]
                 raise ValueError(
                     f"Cycle detected in linked_vaults: {' → '.join(cycle)}"
                 )
-            if color[neighbor] == WHITE:
+            if color[neighbor] == white:
                 dfs(neighbor, path)
         path.pop()
-        color[vault_id] = BLACK
+        color[vault_id] = black
 
     for vault_id in configs:
-        if color[vault_id] == WHITE:
+        if color[vault_id] == white:
             dfs(vault_id, [])

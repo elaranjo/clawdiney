@@ -1,6 +1,5 @@
 """Tests for clawdiney.config.Config multi-vault support."""
 
-import os
 from pathlib import Path
 
 import pytest
@@ -41,7 +40,9 @@ class TestMultiVault:
         monkeypatch.setenv("VAULT_PROJECTS_PATH", "/tmp/vault-projects")
 
         assert self._cfg.Config.get_vault_path("general") == Path("/tmp/vault-general")
-        assert self._cfg.Config.get_vault_path("projects") == Path("/tmp/vault-projects")
+        assert self._cfg.Config.get_vault_path("projects") == Path(
+            "/tmp/vault-projects"
+        )
 
     def test_invalid_vault_id_raises_keyerror(self, monkeypatch):
         monkeypatch.delenv("VAULTS_DIR", raising=False)
@@ -106,13 +107,13 @@ def _write_toml(path: Path, data: dict) -> None:
     for k, v in data.items():
         if isinstance(v, list):
             items = ", ".join(f'"{x}"' for x in v)
-            lines.append(f'{k} = [{items}]')
+            lines.append(f"{k} = [{items}]")
         elif isinstance(v, str):
             lines.append(f'{k} = "{v}"')
         elif isinstance(v, bool):
-            lines.append(f'{k} = {"true" if v else "false"}')
+            lines.append(f"{k} = {'true' if v else 'false'}")
         else:
-            lines.append(f'{k} = {v}')
+            lines.append(f"{k} = {v}")
     path.write_text("\n".join(lines) + "\n")
 
 

@@ -1,9 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import clawdiney.vault_writer as vw_mod
 import pytest
 
+import clawdiney.vault_writer as vw_mod
 from clawdiney.vault_writer import VaultWriter, get_writer
 
 
@@ -54,7 +54,9 @@ def test_write_note_legacy_no_vault_name(vault_root: Path) -> None:
 
     result = writer.write_note("test_note.md", "# Legacy Content")
     assert result["success"] is True
-    assert (vault_root / "test_note.md").read_text(encoding="utf-8") == "# Legacy Content"
+    assert (vault_root / "test_note.md").read_text(
+        encoding="utf-8"
+    ) == "# Legacy Content"
 
 
 def test_write_note_reindex_called_with_vault_name(vault_root: Path) -> None:
@@ -62,7 +64,9 @@ def test_write_note_reindex_called_with_vault_name(vault_root: Path) -> None:
     writer._get_collection = MagicMock(return_value=MagicMock())
     writer._get_neo4j_driver = MagicMock(return_value=MagicMock())
     writer.indexer.sync_file = MagicMock(return_value=True)
-    writer.indexer._get_all_vault_files = MagicMock(return_value={vault_root / "test.md": ""})
+    writer.indexer._get_all_vault_files = MagicMock(
+        return_value={vault_root / "test.md": ""}
+    )
 
     result = writer.write_note("test.md", "# Content")
     assert result["success"] is True
@@ -77,7 +81,9 @@ def test_write_note_reindex_called_without_vault_name(vault_root: Path) -> None:
     writer._get_collection = MagicMock(return_value=MagicMock())
     writer._get_neo4j_driver = MagicMock(return_value=MagicMock())
     writer.indexer.sync_file = MagicMock(return_value=True)
-    writer.indexer._get_all_vault_files = MagicMock(return_value={vault_root / "test.md": ""})
+    writer.indexer._get_all_vault_files = MagicMock(
+        return_value={vault_root / "test.md": ""}
+    )
 
     result = writer.write_note("test.md", "# Content")
     assert result["success"] is True
@@ -87,11 +93,14 @@ def test_write_note_reindex_called_without_vault_name(vault_root: Path) -> None:
     assert kwargs.get("vault_name") == ""
 
 
-def test_get_writer_with_vault_name(vault_root_general: Path, vault_root_projects: Path) -> None:
+def test_get_writer_with_vault_name(
+    vault_root_general: Path, vault_root_projects: Path
+) -> None:
     with (
         patch("clawdiney.config.Config._is_multi_vault", return_value=True),
         patch("clawdiney.config.Config.get_vault_path") as mock_get_path,
     ):
+
         def _get_path(name: str) -> Path:
             mapping = {"general": vault_root_general, "projects": vault_root_projects}
             return mapping[name]
@@ -113,6 +122,7 @@ def test_get_writer_with_vault_name(vault_root_general: Path, vault_root_project
 
 def test_get_writer_legacy_no_vault_name(vault_root: Path, monkeypatch) -> None:
     monkeypatch.delenv("VAULTS", raising=False)
+    monkeypatch.delenv("VAULTS_DIR", raising=False)
     with patch("clawdiney.config.Config.VAULT_PATH", str(vault_root)):
         vw_mod._writer_lock = None
         vw_mod._writer_instances.clear()
@@ -126,7 +136,9 @@ def test_get_writer_default_vault_in_multi_vault_mode(vault_root_general: Path) 
     with (
         patch("clawdiney.config.Config._is_multi_vault", return_value=True),
         patch("clawdiney.config.Config.get_default_vault", return_value="general"),
-        patch("clawdiney.config.Config.get_vault_path", return_value=vault_root_general),
+        patch(
+            "clawdiney.config.Config.get_vault_path", return_value=vault_root_general
+        ),
     ):
         vw_mod._writer_lock = None
         vw_mod._writer_instances.clear()
@@ -143,8 +155,6 @@ def test_append_to_daily_with_vault_name(vault_root: Path) -> None:
     writer.indexer.sync_file = MagicMock(return_value=True)
     writer.indexer._get_all_vault_files = MagicMock(return_value={})
     writer.indexer._compute_file_hash = MagicMock(return_value="abc")
-
-    from datetime import date
 
     result = writer.append_to_daily("Daily content", date="2025-01-15")
     assert result["success"] is True

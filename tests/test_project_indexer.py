@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from clawdiney.project_indexer import ProjectInfo, ProjectIndexer
+from clawdiney.project_indexer import ProjectIndexer, ProjectInfo
 
 
 class TestProjectIndexer:

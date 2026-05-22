@@ -3,19 +3,63 @@
 
 import asyncio
 import json
-import os
+from unittest.mock import patch
 
 import httpx
 import pytest
 
-# Skip these tests in CI - they require a running MCP server
-pytestmark = pytest.mark.skipif(
-    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
-    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
-)
+
+class MockHttpxResponse:
+    def __init__(self, json_data):
+        self.json_data = json_data
+        self.status_code = 200
+        self.text = f"data: {json.dumps(json_data)}\n"
+
+    def json(self):
+        return self.json_data
 
 
-async def test_mcp_server():
+def mock_httpx_post(self, url, *args, **kwargs):
+    payload = kwargs.get("json") or {}
+    method = payload.get("method")
+    req_id = payload.get("id")
+    if method == "initialize":
+        return MockHttpxResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-04-04",
+                    "capabilities": {},
+                    "serverInfo": {"name": "clawdiney", "version": "0.1.0"},
+                },
+            }
+        )
+    elif method == "call_tool":
+        tool_name = payload.get("params", {}).get("name")
+        if tool_name == "search_brain":
+            return MockHttpxResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": "Mocked search results: architecture patterns"
+                    },
+                }
+            )
+    return MockHttpxResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
+
+
+@pytest.fixture(autouse=True)
+def setup_mock_httpx():
+    async def async_mock_post(*args, **kwargs):
+        return mock_httpx_post(*args, **kwargs)
+
+    with patch("httpx.AsyncClient.post", new=async_mock_post):
+        yield
+
+
+async def async_test_mcp_server():
     """Testa o servidor MCP usando HTTP direto."""
     url = "http://localhost:8006/mcp"
     headers = {
@@ -107,13 +151,16 @@ async def test_mcp_server():
                 except json.JSONDecodeError as e:
                     print(f"Erro ao parsear JSON: {e}")
 
+            return True
+
         except Exception as e:
             print(f"❌ Erro ao conectar ao servidor: {e}")
             return False
 
-    print("\n✅ Testes concluídos!")
-    return True
+
+def test_mcp_server():
+    assert asyncio.run(async_test_mcp_server()) is True
 
 
 if __name__ == "__main__":
-    asyncio.run(test_mcp_server())
+    asyncio.run(async_test_mcp_server())

@@ -2,7 +2,6 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -39,9 +38,15 @@ def _perform_auto_sync() -> None:
 
         result = incremental_sync_all_vaults()
 
-        total_synced = result.get("files_synced", 0)
-        total_deleted = result.get("files_deleted", 0)
-        total_chunks = result.get("indexed_chunks", 0)
+        total_synced = sum(
+            summary.get("files_synced", 0) for summary in result.values()
+        )
+        total_deleted = sum(
+            summary.get("files_deleted", 0) for summary in result.values()
+        )
+        total_chunks = sum(
+            summary.get("indexed_chunks", 0) for summary in result.values()
+        )
 
         if total_synced > 0 or total_deleted > 0:
             logger.info(
@@ -63,7 +68,6 @@ def _ensure_auto_sync():
             _auto_sync_started = True
             sync_thread = threading.Thread(target=_perform_auto_sync, daemon=True)
             sync_thread.start()
-
 
 
 def _detect_vault_from_cwd() -> str | None:
@@ -281,7 +285,6 @@ def health_check() -> str:
     return f"{status}\n\n" + "\n".join(results)
 
 
-
 @mcp.tool()
 def detect_vault() -> str:
     """
@@ -294,6 +297,7 @@ def detect_vault() -> str:
 
     try:
         from .vault_config import load_vault_config
+
         vc = load_vault_config(Path(str(vpath)))
         linked = vc.linked_vaults if vc.linked_vaults else []
     except Exception:
@@ -307,7 +311,7 @@ def detect_vault() -> str:
         f"Vault detectado: {vault_id}\n"
         f"Vaults linkados (fallback): {linked_str}\n"
         f"Total de vaults disponíveis: {len(vaults)}\n\n"
-        f"Dica: use vault=\"{vault_id}\" explicitamente se precisar forçar um vault específico."
+        f'Dica: use vault="{vault_id}" explicitamente se precisar forçar um vault específico.'
     )
 
 
@@ -375,7 +379,9 @@ def append_to_daily(content: str, vault: str = None) -> str:
 
 
 @mcp.tool()
-def add_learning(topic: str, content: str, area: str = "SOPs", vault: str = None) -> str:
+def add_learning(
+    topic: str, content: str, area: str = "SOPs", vault: str = None
+) -> str:
     """
     Save a learning or insight to the appropriate vault location.
 

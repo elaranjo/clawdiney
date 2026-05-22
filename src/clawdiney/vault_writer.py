@@ -141,7 +141,9 @@ class VaultWriter:
             collection = self._get_collection()
             driver = self._get_neo4j_driver()
 
-            if self.indexer.sync_file(absolute_path, collection, driver, vault_name=self.vault_name or ""):
+            if self.indexer.sync_file(
+                absolute_path, collection, driver, vault_name=self.vault_name or ""
+            ):
                 chunks_indexed = len(
                     self.indexer._get_all_vault_files().get(absolute_path, "")
                 )
@@ -287,10 +289,14 @@ def get_writer(
                 key = vault_name
                 resolved_root = Config.get_vault_path(vault_name)
             else:
-                resolved_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
+                resolved_root = (
+                    Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
+                )
 
         if key not in _writer_instances:
-            _writer_instances[key] = VaultWriter(resolved_root, collection, neo4j_driver, vault_name=vault_name)
+            _writer_instances[key] = VaultWriter(
+                resolved_root, collection, neo4j_driver, vault_name=vault_name
+            )
             logger.info(f"VaultWriter initialized for vault: {key}")
 
         return _writer_instances[key]

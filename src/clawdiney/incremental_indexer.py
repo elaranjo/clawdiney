@@ -186,12 +186,16 @@ class IncrementalIndexer:
                 return False
 
             # Index in ChromaDB
-            ids, documents, metadatas = build_chunk_payload(note_record, vault_name=vault_name)
+            ids, documents, metadatas = build_chunk_payload(
+                note_record, vault_name=vault_name
+            )
             if ids:
                 collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
             # Sync to Neo4j (single note, incremental mode)
-            sync_graph(neo4j_driver, [note_record], incremental=True, vault_name=vault_name)
+            sync_graph(
+                neo4j_driver, [note_record], incremental=True, vault_name=vault_name
+            )
 
             # Update state
             file_hash = self._compute_file_hash(file_path)
@@ -296,7 +300,13 @@ def incremental_sync(
     indexed_chunks = 0
 
     for file_path in changes:
-        if indexer.sync_file(file_path, collection, neo4j_driver, strategy=strategy, vault_name=vault_name):
+        if indexer.sync_file(
+            file_path,
+            collection,
+            neo4j_driver,
+            strategy=strategy,
+            vault_name=vault_name,
+        ):
             synced_files += 1
             # Count chunks
             note_record = build_note_record(file_path, vault_root, strategy=strategy)
@@ -337,6 +347,7 @@ def full_sync(
     collection: chromadb.Collection | None = None,
     neo4j_driver: Any | None = None,
     strategy: str | None = None,
+    vault_name: str = "",
 ) -> dict[str, Any]:
     """Perform a full sync of the vault."""
     return incremental_sync(
@@ -345,6 +356,7 @@ def full_sync(
         neo4j_driver=neo4j_driver,
         strategy=strategy,
         force_full=True,
+        vault_name=vault_name,
     )
 
 

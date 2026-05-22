@@ -51,9 +51,7 @@ class TestIncrementalSyncVaultName(unittest.TestCase):
         mock_session = MagicMock()
         mock_driver.session.return_value.__enter__.return_value = mock_session
 
-        with patch(
-            "clawdiney.incremental_indexer.Config.VAULT_PATH", str(vault_root)
-        ):
+        with patch("clawdiney.incremental_indexer.Config.VAULT_PATH", str(vault_root)):
             result = incremental_sync()
 
         self.assertNotIn("vault_name", result)

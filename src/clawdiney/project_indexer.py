@@ -14,7 +14,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import tomli
 
@@ -98,7 +97,9 @@ class ProjectIndexer:
         ".min.css",
     }
 
-    def __init__(self, vault_path: Path | str, obsidian_folder: str = "00_Inbox/Projetos"):
+    def __init__(
+        self, vault_path: Path | str, obsidian_folder: str = "00_Inbox/Projetos"
+    ):
         """Initialize the ProjectIndexer.
 
         Args:
@@ -191,7 +192,7 @@ class ProjectIndexer:
         sanitized = SAFE_FILENAME_PATTERN.sub("_", name)[:100]
         return f"{sanitized}.md"
 
-    def _analyze_project(self, project_path: Path) -> Optional[ProjectInfo]:
+    def _analyze_project(self, project_path: Path) -> ProjectInfo | None:
         """Analyze a single project directory.
 
         Args:
@@ -237,7 +238,7 @@ class ProjectIndexer:
 
         return info
 
-    def _detect_project_type(self, project_path: Path) -> Optional[str]:
+    def _detect_project_type(self, project_path: Path) -> str | None:
         """Detect the project type based on configuration files."""
         for file_name, project_type in self.PROJECT_FILES.items():
             if (project_path / file_name).exists():
@@ -305,9 +306,7 @@ class ProjectIndexer:
         }
 
         all_deps = " ".join(info.dependencies + info.dev_dependencies).lower()
-        info.stack = [
-            fw for dep, fw in frameworks.items() if dep in all_deps
-        ]
+        info.stack = [fw for dep, fw in frameworks.items() if dep in all_deps]
 
     def _extract_node_info(self, project_path: Path, info: ProjectInfo) -> None:
         """Extract information from Node.js projects.
@@ -329,9 +328,7 @@ class ProjectIndexer:
 
                 # Extract dependencies
                 info.dependencies = list(package.get("dependencies", {}).keys())
-                info.dev_dependencies = list(
-                    package.get("devDependencies", {}).keys()
-                )
+                info.dev_dependencies = list(package.get("devDependencies", {}).keys())
 
                 # Extract scripts
                 info.scripts = package.get("scripts", {})
@@ -349,9 +346,7 @@ class ProjectIndexer:
                 }
 
                 all_deps = " ".join(info.dependencies + info.dev_dependencies).lower()
-                info.stack = [
-                    fw for dep, fw in frameworks.items() if dep in all_deps
-                ]
+                info.stack = [fw for dep, fw in frameworks.items() if dep in all_deps]
 
             except Exception as e:
                 logger.warning(f"Error reading package.json: {e}")
@@ -480,9 +475,7 @@ class ProjectIndexer:
             target_dir.mkdir(parents=True, exist_ok=True)
             resolved_target = target_dir.resolve()
             if not str(resolved_target).startswith(str(self.vault_path)):
-                raise ValueError(
-                    f"Target directory outside vault: {target_dir}"
-                )
+                raise ValueError(f"Target directory outside vault: {target_dir}")
         except OSError as e:
             logger.error(f"Failed to create target directory: {e}")
             raise

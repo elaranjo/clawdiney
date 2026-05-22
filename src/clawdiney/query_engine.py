@@ -219,9 +219,7 @@ class BrainQueryEngine:
         try:
             relative_path = resolved.relative_to(vault_root).as_posix()
         except ValueError as exc:
-            raise ValueError(
-                f"Path '{path}' is outside the vault"
-            ) from exc
+            raise ValueError(f"Path '{path}' is outside the vault") from exc
 
         if not resolved.is_file():
             raise FileNotFoundError(f"Note not found: {relative_path}")
@@ -550,9 +548,7 @@ class BrainQueryEngine:
         self, query: str, collection: Any, n_results: int
     ) -> tuple[list[str], list[dict[str, Any]], str]:
         embedding = self.get_embedding(query)
-        results = collection.query(
-            query_embeddings=[embedding], n_results=n_results
-        )
+        results = collection.query(query_embeddings=[embedding], n_results=n_results)
         docs = results["documents"][0]
         metadatas = results["metadatas"][0]
         return docs, metadatas, ""
@@ -581,14 +577,14 @@ class BrainQueryEngine:
 
         fallback_chain = self._get_fallback_chain()
         if vault_override and vault_override not in fallback_chain:
-            fallback_chain = [vault_override] + [v for v in fallback_chain if v != vault_override]
+            fallback_chain = [vault_override] + [
+                v for v in fallback_chain if v != vault_override
+            ]
 
         all_docs: list[str] = []
         all_metas: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         searched_vaults: set[str] = set()
-
-        fetch_n = n_results * 3 if use_mmr else n_results
 
         for vname in fallback_chain:
             if len(all_docs) >= n_results:
@@ -653,7 +649,9 @@ class BrainQueryEngine:
         for doc, meta in zip(docs, metadatas):
             note_label = meta.get("path") or meta["filename"]
             vault_source = meta.get("vault_source", "?")
-            context_briefing.append(f"--- Source [{vault_source}]: {note_label} ---\n{doc}")
+            context_briefing.append(
+                f"--- Source [{vault_source}]: {note_label} ---\n{doc}"
+            )
             seen_notes.add(note_label)
 
             if expand_graph:
@@ -674,7 +672,13 @@ class BrainQueryEngine:
         results = self.vector_collection.query(
             query_embeddings=[embedding], n_results=n_results
         )
-        return results["documents"][0], results["metadatas"][0]
+        docs = results["documents"][0] if results.get("documents") else []
+        metadatas = (
+            [dict(m) for m in results["metadatas"][0]]
+            if results.get("metadatas") and results["metadatas"]
+            else []
+        )
+        return docs, metadatas
 
     def _apply_reranking(
         self,

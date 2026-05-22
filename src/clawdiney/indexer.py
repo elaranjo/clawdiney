@@ -140,7 +140,9 @@ def index_note_records(
     indexed_chunks = 0
 
     for note_record in note_records:
-        ids, documents, metadatas = build_chunk_payload(note_record, vault_name=vault_name)
+        ids, documents, metadatas = build_chunk_payload(
+            note_record, vault_name=vault_name
+        )
         if not ids:
             continue
         collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
@@ -336,9 +338,7 @@ def _index_vault_inner(
         indexed_chunks = index_note_records(
             collection, note_records, vault_name=vault_name
         )
-        sync_graph(
-            neo4j_driver, note_records, vault_name=vault_name
-        )
+        sync_graph(neo4j_driver, note_records, vault_name=vault_name)
 
         return {
             "vault_root": str(vault_root),
@@ -387,19 +387,27 @@ def index_all_vaults(
 
 def main() -> dict[str, Any] | dict[str, dict[str, Any]]:
     setup_logging()
-    parser = argparse.ArgumentParser(description="Index Obsidian vault(s) into ChromaDB and Neo4j")
-    parser.add_argument("--vault", type=str, default=None, help="Index only a specific vault by name")
+    parser = argparse.ArgumentParser(
+        description="Index Obsidian vault(s) into ChromaDB and Neo4j"
+    )
+    parser.add_argument(
+        "--vault", type=str, default=None, help="Index only a specific vault by name"
+    )
     args = parser.parse_args()
 
     if args.vault:
-        logger.info(f"Indexing vault '{args.vault}' from {Config.get_vault_path(args.vault)}")
+        logger.info(
+            f"Indexing vault '{args.vault}' from {Config.get_vault_path(args.vault)}"
+        )
         summary = index_named_vault(args.vault)
         logger.info(
             f"Indexing complete: {summary['processed_files']}/{summary['total_files']} files processed, "
             f"{summary['indexed_chunks']} chunks indexed"
         )
     elif Config._is_multi_vault():
-        logger.info(f"Indexing all configured vaults: {list(Config.get_all_vaults().keys())}")
+        logger.info(
+            f"Indexing all configured vaults: {list(Config.get_all_vaults().keys())}"
+        )
         summaries = index_all_vaults()
         total_all = sum(s["indexed_chunks"] for s in summaries.values())
         logger.info(f"All vaults indexed: {total_all} total chunks indexed")

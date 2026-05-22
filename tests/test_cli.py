@@ -1,6 +1,4 @@
-import os
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -9,7 +7,11 @@ from clawdiney.cli import main
 
 def test_create_with_explicit_path(monkeypatch, tmp_path):
     vault_dir = tmp_path / "my_vault"
-    monkeypatch.setattr(sys, "argv", ["clawdiney", "vault", "create", "my_vault", "--path", str(vault_dir)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["clawdiney", "vault", "create", "my_vault", "--path", str(vault_dir)],
+    )
     main()
     assert vault_dir.exists()
     assert (vault_dir / "clawdiney.toml").exists()
@@ -37,7 +39,11 @@ def test_create_with_vaults_dir(monkeypatch, tmp_path):
 def test_create_existing_directory(monkeypatch, tmp_path):
     vault_dir = tmp_path / "existing"
     vault_dir.mkdir()
-    monkeypatch.setattr(sys, "argv", ["clawdiney", "vault", "create", "existing", "--path", str(vault_dir)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["clawdiney", "vault", "create", "existing", "--path", str(vault_dir)],
+    )
     with pytest.raises(SystemExit):
         main()
 
@@ -53,7 +59,9 @@ def test_list_with_vaults(monkeypatch, tmp_path, capsys):
     vault_dir.mkdir(parents=True)
     toml_content = 'id = "test_vault"\nname = "Test Vault"\n'
     (vault_dir / "clawdiney.toml").write_text(toml_content)
-    monkeypatch.setattr("clawdiney.cli.Config.get_all_vaults", lambda: {"test_vault": vault_dir})
+    monkeypatch.setattr(
+        "clawdiney.cli.Config.get_all_vaults", lambda: {"test_vault": vault_dir}
+    )
     monkeypatch.setattr(sys, "argv", ["clawdiney", "vault", "list"])
     main()
     captured = capsys.readouterr()

@@ -193,9 +193,7 @@ def main() -> int:
 
     try:
         # Create indexer
-        indexer = ProjectIndexer(
-            vault_path=args.vault, obsidian_folder=args.folder
-        )
+        indexer = ProjectIndexer(vault_path=args.vault, obsidian_folder=args.folder)
     except ValueError as e:
         logger.error(f"Failed to initialize indexer: {e}")
         return 1
