@@ -123,15 +123,59 @@ class TestQueryCacheOperations:
             assert cache.is_available() is False
 
 
-class TestQueryCacheIntegration:
-    """Integration tests with real Redis (skipped by default)."""
+class FakeRedis:
+    def __init__(self, *args, **kwargs):
+        self.store = {}
+        self.ttls = {}
 
-    @pytest.mark.skipif(
-        os.getenv("RUN_CACHE_TESTS") != "1",
-        reason="Set RUN_CACHE_TESTS=1 to run Redis integration tests",
-    )
+    def ping(self):
+        return True
+
+    def get(self, key):
+        if key in self.store:
+            # Check expiration
+            expires_at = self.ttls.get(key)
+            if expires_at and time.time() > expires_at:
+                del self.store[key]
+                del self.ttls[key]
+                return None
+            return self.store[key]
+        return None
+
+    def setex(self, key, ttl, value):
+        from datetime import timedelta
+        if isinstance(ttl, timedelta):
+            ttl_seconds = ttl.total_seconds()
+        else:
+            ttl_seconds = float(ttl)
+        self.store[key] = value
+        self.ttls[key] = time.time() + ttl_seconds
+        return True
+
+    def ttl(self, key):
+        if key in self.store:
+            expires_at = self.ttls.get(key)
+            if expires_at:
+                remaining = int(expires_at - time.time())
+                return max(0, remaining)
+            return -1
+        return -2
+
+    def close(self):
+        pass
+
+
+class TestQueryCacheIntegration:
+    """Tests with FakeRedis stub (unconditionally run, no real Redis required)."""
+
+    @pytest.fixture(autouse=True)
+    def setup_fake_redis(self):
+        fake = FakeRedis()
+        with patch("clawdiney.query_cache.redis.Redis", return_value=fake):
+            yield
+
     def test_real_redis_roundtrip(self):
-        """Test cache set and get with real Redis."""
+        """Test cache set and get with FakeRedis."""
         cache = QueryCache(ttl_hours=1)
         try:
             # Set value
@@ -144,12 +188,8 @@ class TestQueryCacheIntegration:
         finally:
             cache.close()
 
-    @pytest.mark.skipif(
-        os.getenv("RUN_CACHE_TESTS") != "1",
-        reason="Set RUN_CACHE_TESTS=1 to run Redis integration tests",
-    )
     def test_real_redis_ttl(self):
-        """Test cache TTL with real Redis."""
+        """Test cache TTL with FakeRedis."""
         cache = QueryCache(ttl_hours=1)
         try:
             test_data = {"test": "data"}
@@ -161,3 +201,4 @@ class TestQueryCacheIntegration:
             assert ttl <= 3600  # 1 hour max
         finally:
             cache.close()
+

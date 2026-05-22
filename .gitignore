@@ -41,3 +41,5 @@ logs/
 redis_data/
 src/clawdiney.egg-info/
 
+# Antigravity CLI
+.antigravitycli/

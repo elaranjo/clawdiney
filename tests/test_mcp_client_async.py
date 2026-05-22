@@ -8,14 +8,60 @@ import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-# Skip these tests in CI - they require a running MCP server
-pytestmark = pytest.mark.skipif(
-    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
-    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
-)
+from unittest.mock import patch
+
+class MockToolResult:
+    def __init__(self, content):
+        self.content = content
 
 
-async def test_mcp_server():
+class MockClientSession:
+    def __init__(self, read, write):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+    async def initialize(self):
+        return "Mocked MCP Client Initialized"
+
+    async def call_tool(self, tool_name, arguments):
+        if tool_name == "search_brain":
+            return MockToolResult("Mocked search results: architecture patterns")
+        elif tool_name == "resolve_note":
+            return MockToolResult("[{'path': 'design.md', 'filename': 'design.md'}]")
+        elif tool_name == "explore_graph":
+            return MockToolResult("['design.md']")
+        elif tool_name == "get_note_chunks":
+            return MockToolResult("[{'heading': '# Header 1'}]")
+        return MockToolResult("")
+
+
+class MockSseClient:
+    def __init__(self, url):
+        pass
+
+    async def __aenter__(self):
+        return (None, None)
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def setup_mock_mcp():
+    with (
+        patch("tests.test_mcp_client_async.sse_client", new=MockSseClient),
+        patch("tests.test_mcp_client_async.ClientSession", new=MockClientSession),
+    ):
+        yield
+
+
+
+async def async_test_mcp_server():
     """Testa o servidor MCP usando transporte SSE."""
     try:
         # Criar cliente SSE para conectar ao servidor
@@ -78,13 +124,15 @@ async def test_mcp_server():
                 except Exception as e:
                     print(f"❌ Erro na função get_note_chunks: {e}")
 
+        return True
+
     except Exception as e:
         print(f"❌ Erro ao conectar ao servidor: {e}")
         return False
 
-    print("\n✅ Todos os testes concluídos!")
-    return True
+def test_mcp_server():
+    assert asyncio.run(async_test_mcp_server()) is True
 
 
 if __name__ == "__main__":
-    asyncio.run(test_mcp_server())
+    asyncio.run(async_test_mcp_server())

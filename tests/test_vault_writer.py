@@ -113,6 +113,7 @@ def test_get_writer_with_vault_name(vault_root_general: Path, vault_root_project
 
 def test_get_writer_legacy_no_vault_name(vault_root: Path, monkeypatch) -> None:
     monkeypatch.delenv("VAULTS", raising=False)
+    monkeypatch.delenv("VAULTS_DIR", raising=False)
     with patch("clawdiney.config.Config.VAULT_PATH", str(vault_root)):
         vw_mod._writer_lock = None
         vw_mod._writer_instances.clear()

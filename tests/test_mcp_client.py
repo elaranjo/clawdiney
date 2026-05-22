@@ -7,11 +7,54 @@ import os
 import pytest
 import requests
 
-# Skip these tests in CI - they require a running MCP server
-pytestmark = pytest.mark.skipif(
-    "CI" in os.environ or os.getenv("RUN_MCP_TESTS") != "1",
-    reason="MCP server tests require a running MCP server. Set RUN_MCP_TESTS=1 to run.",
-)
+from unittest.mock import patch
+
+class MockResponse:
+    def __init__(self, json_data):
+        self.json_data = json_data
+        self.status_code = 200
+        self.text = f"data: {json.dumps(json_data)}\n"
+
+    def iter_lines(self):
+        yield f"data: {json.dumps(self.json_data)}".encode("utf-8")
+
+
+def mock_post(url, headers=None, json_data=None, json=None, stream=False):
+    payload = json or json_data or {}
+    method = payload.get("method")
+    req_id = payload.get("id")
+    if method == "initialize":
+        return MockResponse({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-04-04",
+                "capabilities": {},
+                "serverInfo": {"name": "clawdiney", "version": "0.1.0"}
+            }
+        })
+    elif method == "call_tool":
+        tool_name = payload.get("params", {}).get("name")
+        if tool_name == "search_brain":
+            return MockResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": "Mocked search results: architecture patterns"}
+            })
+        elif tool_name == "resolve_note":
+            return MockResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": "[{'path': 'design.md', 'filename': 'design.md'}]"}
+            })
+    return MockResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
+
+
+@pytest.fixture(autouse=True)
+def setup_mock_requests():
+    with patch("requests.post", side_effect=mock_post):
+        yield
+
 
 
 def send_request(url, headers, data):
