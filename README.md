@@ -1,8 +1,8 @@
 # 🧠 Clawdiney
 
 [![CI](https://github.com/elaranjo/clawdiney/actions/workflows/ci.yml/badge.svg)](https://github.com/elaranjo/clawdiney/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/clawdiney.svg)](https://pypi.org/project/clawdiney/)
-[![Python Version](https://img.shields.io/pypi/pyversions/clawdiney.svg)](https://pypi.org/project/clawdiney/)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/elaranjo/clawdiney)
+[![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://github.com/elaranjo/clawdiney)
 [![codecov](https://codecov.io/gh/elaranjo/clawdiney/branch/main/graph/badge.svg)](https://codecov.io/gh/elaranjo/clawdiney)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
