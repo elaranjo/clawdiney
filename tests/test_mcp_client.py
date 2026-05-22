@@ -23,29 +23,39 @@ def mock_post(url, headers=None, json_data=None, json=None, stream=False):
     method = payload.get("method")
     req_id = payload.get("id")
     if method == "initialize":
-        return MockResponse({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-04-04",
-                "capabilities": {},
-                "serverInfo": {"name": "clawdiney", "version": "0.1.0"}
+        return MockResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-04-04",
+                    "capabilities": {},
+                    "serverInfo": {"name": "clawdiney", "version": "0.1.0"},
+                },
             }
-        })
+        )
     elif method == "call_tool":
         tool_name = payload.get("params", {}).get("name")
         if tool_name == "search_brain":
-            return MockResponse({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"content": "Mocked search results: architecture patterns"}
-            })
+            return MockResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": "Mocked search results: architecture patterns"
+                    },
+                }
+            )
         elif tool_name == "resolve_note":
-            return MockResponse({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"content": "[{'path': 'design.md', 'filename': 'design.md'}]"}
-            })
+            return MockResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": "[{'path': 'design.md', 'filename': 'design.md'}]"
+                    },
+                }
+            )
     return MockResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
 
 
@@ -53,7 +63,6 @@ def mock_post(url, headers=None, json_data=None, json=None, stream=False):
 def setup_mock_requests():
     with patch("requests.post", side_effect=mock_post):
         yield
-
 
 
 def send_request(url, headers, data):

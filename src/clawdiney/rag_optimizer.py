@@ -140,7 +140,9 @@ class QueryPreprocessor:
         "working",
     }
 
-    def __init__(self, expand_abbreviations: bool = True, remove_stop_words: bool = False):
+    def __init__(
+        self, expand_abbreviations: bool = True, remove_stop_words: bool = False
+    ):
         """
         Initialize the query preprocessor.
 
@@ -343,10 +345,7 @@ class MMRReranker:
         Returns:
             List of similarity scores
         """
-        return [
-            self._cosine_similarity(query_embedding, emb)
-            for emb in doc_embeddings
-        ]
+        return [self._cosine_similarity(query_embedding, emb) for emb in doc_embeddings]
 
     def _select_mmr_indices(
         self,
@@ -412,8 +411,7 @@ class MMRReranker:
             )
 
             mmr_score = (
-                self.lambda_param * relevance
-                - (1 - self.lambda_param) * diversity
+                self.lambda_param * relevance - (1 - self.lambda_param) * diversity
             )
 
             if mmr_score > best_mmr_score:

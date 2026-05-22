@@ -20,14 +20,17 @@ def _write_toml(path: Path, content: str) -> Path:
 class TestLoadVaultConfig:
     def test_valid_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            vault_root = _write_toml(Path(tmpdir), """
+            vault_root = _write_toml(
+                Path(tmpdir),
+                """
 id = "vault_general"
 name = "General Vault"
 description = "A general vault"
 linked_vaults = ["vault_projects"]
 include_patterns = ["**/*.md"]
 exclude_patterns = ["drafts/**"]
-""")
+""",
+            )
             config = load_vault_config(vault_root)
 
             assert config.id == "vault_general"
@@ -39,10 +42,13 @@ exclude_patterns = ["drafts/**"]
 
     def test_minimal_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            vault_root = _write_toml(Path(tmpdir), """
+            vault_root = _write_toml(
+                Path(tmpdir),
+                """
 id = "vault_minimal"
 name = "Minimal"
-""")
+""",
+            )
             config = load_vault_config(vault_root)
 
             assert config.id == "vault_minimal"
@@ -71,11 +77,14 @@ name = "Minimal"
 
     def test_empty_linked_vaults(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            vault_root = _write_toml(Path(tmpdir), """
+            vault_root = _write_toml(
+                Path(tmpdir),
+                """
 id = "vault_standalone"
 name = "Standalone Vault"
 linked_vaults = []
-""")
+""",
+            )
             config = load_vault_config(vault_root)
             assert config.linked_vaults == []
 

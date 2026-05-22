@@ -13,7 +13,7 @@ def mock_brain_deps():
     mock_collection.query.return_value = {
         "documents": [["Test doc content"]],
         "metadatas": [[{"path": "README.md", "heading": "# README"}]],
-        "distances": [[0.1]]
+        "distances": [[0.1]],
     }
     chroma_client.get_collection.return_value = mock_collection
 
@@ -30,10 +30,18 @@ def mock_brain_deps():
         patch("clawdiney.query_engine.GraphDatabase.driver", return_value=mock_driver),
         patch("clawdiney.query_engine.QueryCache", return_value=cache_mock),
         patch("clawdiney.query_engine.Config.VAULT_PATH", "/tmp/mock_vault"),
-        patch("clawdiney.query_engine.Config.get_vault_path", return_value="/tmp/mock_vault"),
-        patch("clawdiney.query_engine.Config.get_default_vault", return_value="general"),
+        patch(
+            "clawdiney.query_engine.Config.get_vault_path",
+            return_value="/tmp/mock_vault",
+        ),
+        patch(
+            "clawdiney.query_engine.Config.get_default_vault", return_value="general"
+        ),
         patch("clawdiney.query_engine.load_vault_config"),
-        patch("clawdiney.query_engine.BrainQueryEngine.get_embedding", return_value=[0.1, 0.2, 0.3]),
+        patch(
+            "clawdiney.query_engine.BrainQueryEngine.get_embedding",
+            return_value=[0.1, 0.2, 0.3],
+        ),
     ):
         yield
 
@@ -52,11 +60,14 @@ def test_resolve_note_returns_list():
     engine = BrainQueryEngine()
     try:
         # Mock resolve_note dependencies inside the engine
-        with patch.object(engine, "resolve_note", return_value=[{"path": "README.md", "filename": "README.md", "score": 100}]):
+        with patch.object(
+            engine,
+            "resolve_note",
+            return_value=[{"path": "README.md", "filename": "README.md", "score": 100}],
+        ):
             result = engine.resolve_note("README.md")
             assert isinstance(result, list)
             assert len(result) > 0
             assert result[0]["path"] == "README.md"
     finally:
         engine.close()
-

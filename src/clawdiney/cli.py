@@ -16,10 +16,16 @@ def main() -> None:
     vault_subparsers = vault_parser.add_subparsers(dest="vault_command", required=True)
 
     create = vault_subparsers.add_parser("create", help="Create a new vault")
-    create.add_argument("id", type=str, help="Vault ID (letters, numbers, hyphens, underscores)")
+    create.add_argument(
+        "id", type=str, help="Vault ID (letters, numbers, hyphens, underscores)"
+    )
     create.add_argument("--name", type=str, default=None, help="Display name")
-    create.add_argument("--path", type=str, default=None, help="Path (default: VAULTS_DIR/id)")
-    create.add_argument("--linked", type=str, default="", help="Comma-separated linked vault IDs")
+    create.add_argument(
+        "--path", type=str, default=None, help="Path (default: VAULTS_DIR/id)"
+    )
+    create.add_argument(
+        "--linked", type=str, default="", help="Comma-separated linked vault IDs"
+    )
 
     vault_subparsers.add_parser("list", help="List all configured vaults")
     args = parser.parse_args()
@@ -32,7 +38,10 @@ def main() -> None:
 
 def _validate_id(id_str: str) -> None:
     if not re.match(r"^[a-zA-Z0-9_-]+$", id_str):
-        print("Error: Vault ID must contain only letters, numbers, hyphens, and underscores.", file=sys.stderr)
+        print(
+            "Error: Vault ID must contain only letters, numbers, hyphens, and underscores.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

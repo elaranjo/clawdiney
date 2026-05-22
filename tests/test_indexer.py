@@ -60,7 +60,9 @@ class TestBuildChunkPayload(unittest.TestCase):
         self.assertNotIn("vault", metadatas[0])
 
     def test_with_vault_name_adds_vault_to_metadata(self):
-        ids, docs, metadatas = build_chunk_payload(self.note_record, vault_name="general")
+        ids, docs, metadatas = build_chunk_payload(
+            self.note_record, vault_name="general"
+        )
         self.assertIn("vault", metadatas[0])
         self.assertEqual(metadatas[0]["vault"], "general")
 
@@ -155,9 +157,7 @@ class TestSyncGraphVaultProperty(unittest.TestCase):
 class TestIndexNamedVault(unittest.TestCase):
     @patch("clawdiney.indexer.Config.get_vault_path")
     @patch("clawdiney.indexer._index_vault_inner")
-    def test_index_named_vault_calls_inner_with_name(
-        self, mock_inner, mock_get_path
-    ):
+    def test_index_named_vault_calls_inner_with_name(self, mock_inner, mock_get_path):
         mock_get_path.return_value = Path("/fake/vault")
         mock_inner.return_value = {"vault_name": "general"}
 

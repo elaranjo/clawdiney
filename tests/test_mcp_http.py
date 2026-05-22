@@ -24,23 +24,29 @@ def mock_httpx_post(self, url, *args, **kwargs):
     method = payload.get("method")
     req_id = payload.get("id")
     if method == "initialize":
-        return MockHttpxResponse({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-04-04",
-                "capabilities": {},
-                "serverInfo": {"name": "clawdiney", "version": "0.1.0"}
+        return MockHttpxResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-04-04",
+                    "capabilities": {},
+                    "serverInfo": {"name": "clawdiney", "version": "0.1.0"},
+                },
             }
-        })
+        )
     elif method == "call_tool":
         tool_name = payload.get("params", {}).get("name")
         if tool_name == "search_brain":
-            return MockHttpxResponse({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"content": "Mocked search results: architecture patterns"}
-            })
+            return MockHttpxResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": "Mocked search results: architecture patterns"
+                    },
+                }
+            )
     return MockHttpxResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
 
 
@@ -48,9 +54,9 @@ def mock_httpx_post(self, url, *args, **kwargs):
 def setup_mock_httpx():
     async def async_mock_post(*args, **kwargs):
         return mock_httpx_post(*args, **kwargs)
+
     with patch("httpx.AsyncClient.post", new=async_mock_post):
         yield
-
 
 
 async def async_test_mcp_server():
@@ -150,6 +156,7 @@ async def async_test_mcp_server():
         except Exception as e:
             print(f"❌ Erro ao conectar ao servidor: {e}")
             return False
+
 
 def test_mcp_server():
     assert asyncio.run(async_test_mcp_server()) is True

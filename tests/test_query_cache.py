@@ -78,6 +78,7 @@ class TestQueryCacheOperations:
     def test_cache_hit(self, mock_redis):
         """Test cache hit returns cached data."""
         import json
+
         cached_data = {"result": "test data"}
         mock_redis.get.return_value = json.dumps(cached_data)
         cache = QueryCache()
@@ -143,6 +144,7 @@ class FakeRedis:
 
     def setex(self, key, ttl, value):
         from datetime import timedelta
+
         if isinstance(ttl, timedelta):
             ttl_seconds = ttl.total_seconds()
         else:
@@ -200,4 +202,3 @@ class TestQueryCacheIntegration:
             assert ttl <= 3600  # 1 hour max
         finally:
             cache.close()
-

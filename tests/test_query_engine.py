@@ -9,11 +9,16 @@ from clawdiney.query_engine import BrainQueryEngine
 @pytest.fixture
 def mock_deps():
     with (
-        patch("clawdiney.query_engine.Config.get_chroma_client_config", return_value={"host": "localhost", "port": "8000"}),
+        patch(
+            "clawdiney.query_engine.Config.get_chroma_client_config",
+            return_value={"host": "localhost", "port": "8000"},
+        ),
         patch("clawdiney.query_engine.chromadb.HttpClient"),
         patch("clawdiney.query_engine.GraphDatabase.driver"),
         patch("clawdiney.query_engine.QueryCache"),
-        patch("clawdiney.query_engine.Config.get_default_vault", return_value="general"),
+        patch(
+            "clawdiney.query_engine.Config.get_default_vault", return_value="general"
+        ),
         patch("clawdiney.query_engine.Config.VAULT_PATH", "~/test_vault"),
         patch("clawdiney.query_engine.Config.get_vault_path"),
         patch("clawdiney.query_engine.load_vault_config"),
@@ -64,7 +69,9 @@ class TestBrainQueryEngineInit:
     def test_legacy_fallback_collection(self, mock_deps):
         chroma_client = MagicMock()
         chroma_client.get_collection.side_effect = [Exception("not found"), MagicMock()]
-        with patch("clawdiney.query_engine.chromadb.HttpClient", return_value=chroma_client):
+        with patch(
+            "clawdiney.query_engine.chromadb.HttpClient", return_value=chroma_client
+        ):
             engine = BrainQueryEngine(vault="nonexistent")
         assert engine.vector_collection is not None
 
@@ -115,7 +122,10 @@ class TestResolveNoteVaultAware:
     def test_resolve_note_with_vault_param(self, mock_collections):
         engine, _ = mock_collections
         with (
-            patch("clawdiney.query_engine.Config.get_vault_path", return_value="/fake/projects_vault"),
+            patch(
+                "clawdiney.query_engine.Config.get_vault_path",
+                return_value="/fake/projects_vault",
+            ),
             patch("pathlib.Path.rglob") as mock_rglob,
         ):
             fake_path = MagicMock(spec=Path)
@@ -145,7 +155,9 @@ class TestGetRelatedNotesVaultAware:
         engine, _ = mock_collections
         mock_session = MagicMock()
         mock_record = MagicMock()
-        mock_record.__getitem__.side_effect = lambda k: "related_note.md" if k == "path" else ""
+        mock_record.__getitem__.side_effect = lambda k: (
+            "related_note.md" if k == "path" else ""
+        )
         mock_session.run.return_value = [mock_record]
         engine.neo4j_driver.session.return_value.__enter__.return_value = mock_session
 
@@ -160,7 +172,9 @@ class TestGetRelatedNotesVaultAware:
         engine, _ = mock_collections
         mock_session = MagicMock()
         mock_record = MagicMock()
-        mock_record.__getitem__.side_effect = lambda k: "related.md" if k == "path" else ""
+        mock_record.__getitem__.side_effect = lambda k: (
+            "related.md" if k == "path" else ""
+        )
         mock_session.run.return_value = [mock_record]
         engine.neo4j_driver.session.return_value.__enter__.return_value = mock_session
 
@@ -175,7 +189,10 @@ class TestGetNoteByPathVaultAware:
     def test_get_note_by_path_with_vault(self, mock_collections):
         engine, _ = mock_collections
         with (
-            patch("clawdiney.query_engine.Config.get_vault_path", return_value="/fake/projects_vault"),
+            patch(
+                "clawdiney.query_engine.Config.get_vault_path",
+                return_value="/fake/projects_vault",
+            ),
             patch("pathlib.Path.is_file", return_value=True),
             patch("pathlib.Path.read_text", return_value="# Note content"),
         ):

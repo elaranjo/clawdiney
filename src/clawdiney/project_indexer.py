@@ -97,7 +97,9 @@ class ProjectIndexer:
         ".min.css",
     }
 
-    def __init__(self, vault_path: Path | str, obsidian_folder: str = "00_Inbox/Projetos"):
+    def __init__(
+        self, vault_path: Path | str, obsidian_folder: str = "00_Inbox/Projetos"
+    ):
         """Initialize the ProjectIndexer.
 
         Args:
@@ -304,9 +306,7 @@ class ProjectIndexer:
         }
 
         all_deps = " ".join(info.dependencies + info.dev_dependencies).lower()
-        info.stack = [
-            fw for dep, fw in frameworks.items() if dep in all_deps
-        ]
+        info.stack = [fw for dep, fw in frameworks.items() if dep in all_deps]
 
     def _extract_node_info(self, project_path: Path, info: ProjectInfo) -> None:
         """Extract information from Node.js projects.
@@ -328,9 +328,7 @@ class ProjectIndexer:
 
                 # Extract dependencies
                 info.dependencies = list(package.get("dependencies", {}).keys())
-                info.dev_dependencies = list(
-                    package.get("devDependencies", {}).keys()
-                )
+                info.dev_dependencies = list(package.get("devDependencies", {}).keys())
 
                 # Extract scripts
                 info.scripts = package.get("scripts", {})
@@ -348,9 +346,7 @@ class ProjectIndexer:
                 }
 
                 all_deps = " ".join(info.dependencies + info.dev_dependencies).lower()
-                info.stack = [
-                    fw for dep, fw in frameworks.items() if dep in all_deps
-                ]
+                info.stack = [fw for dep, fw in frameworks.items() if dep in all_deps]
 
             except Exception as e:
                 logger.warning(f"Error reading package.json: {e}")
@@ -479,9 +475,7 @@ class ProjectIndexer:
             target_dir.mkdir(parents=True, exist_ok=True)
             resolved_target = target_dir.resolve()
             if not str(resolved_target).startswith(str(self.vault_path)):
-                raise ValueError(
-                    f"Target directory outside vault: {target_dir}"
-                )
+                raise ValueError(f"Target directory outside vault: {target_dir}")
         except OSError as e:
             logger.error(f"Failed to create target directory: {e}")
             raise

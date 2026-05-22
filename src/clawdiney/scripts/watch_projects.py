@@ -139,7 +139,9 @@ class ProjectWatchHandler(FileSystemEventHandler):
         self._pending_projects[project_name] = now
 
         if high_priority:
-            logger.info(f"🔴 High-priority change in {project_name} - will reindex soon")
+            logger.info(
+                f"🔴 High-priority change in {project_name} - will reindex soon"
+            )
         else:
             logger.debug(f"Change detected in {project_name}")
 
@@ -311,7 +313,9 @@ def main():
     """Main entry point."""
     if len(sys.argv) < 2:
         print("Usage: python -m clawdiney.scripts.watch_projects <projects_root>")
-        print("Example: python -m clawdiney.scripts.watch_projects ~/Documentos/projetos")
+        print(
+            "Example: python -m clawdiney.scripts.watch_projects ~/Documentos/projetos"
+        )
         sys.exit(1)
 
     projects_root = Path(sys.argv[1]).expanduser().resolve()

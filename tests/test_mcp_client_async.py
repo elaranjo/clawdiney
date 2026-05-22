@@ -59,7 +59,6 @@ def setup_mock_mcp():
         yield
 
 
-
 async def async_test_mcp_server():
     """Testa o servidor MCP usando transporte SSE."""
     try:
@@ -128,6 +127,7 @@ async def async_test_mcp_server():
     except Exception as e:
         print(f"❌ Erro ao conectar ao servidor: {e}")
         return False
+
 
 def test_mcp_server():
     assert asyncio.run(async_test_mcp_server()) is True

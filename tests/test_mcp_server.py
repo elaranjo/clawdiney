@@ -127,7 +127,9 @@ class TestSearchTools:
 @patch("clawdiney.mcp_server._ensure_auto_sync")
 @patch("clawdiney.vault_writer.get_writer")
 class TestWriteTools:
-    def test_write_note_no_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_write_note_no_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import write_note
@@ -136,7 +138,9 @@ class TestWriteTools:
         assert "Indexed 3 chunks" in result
         mock_get_writer.assert_called_once_with(vault_name=None)
 
-    def test_write_note_with_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_write_note_with_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import write_note
@@ -145,7 +149,9 @@ class TestWriteTools:
         assert "Indexed 3 chunks" in result
         mock_get_writer.assert_called_once_with(vault_name="projects")
 
-    def test_append_to_daily_no_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_append_to_daily_no_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import append_to_daily
@@ -154,7 +160,9 @@ class TestWriteTools:
         assert "daily note" in result
         mock_get_writer.assert_called_once_with(vault_name=None)
 
-    def test_append_to_daily_with_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_append_to_daily_with_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import append_to_daily
@@ -163,7 +171,9 @@ class TestWriteTools:
         assert "daily note" in result
         mock_get_writer.assert_called_once_with(vault_name="personal")
 
-    def test_add_learning_no_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_add_learning_no_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import add_learning
@@ -172,7 +182,9 @@ class TestWriteTools:
         assert "Learning saved" in result
         mock_get_writer.assert_called_once_with(vault_name=None)
 
-    def test_add_learning_with_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_add_learning_with_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import add_learning
@@ -181,7 +193,9 @@ class TestWriteTools:
         assert "Learning saved" in result
         mock_get_writer.assert_called_once_with(vault_name="projects")
 
-    def test_delete_note_no_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_delete_note_no_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import delete_note
@@ -190,7 +204,9 @@ class TestWriteTools:
         assert "Note deleted" in result
         mock_get_writer.assert_called_once_with(vault_name=None)
 
-    def test_delete_note_with_vault(self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer):
+    def test_delete_note_with_vault(
+        self, mock_get_writer, mock_sync, mock_get_engine, mock_engine, mock_writer
+    ):
         mock_get_engine.return_value = mock_engine
         mock_get_writer.return_value = mock_writer
         from clawdiney.mcp_server import delete_note
@@ -201,7 +217,10 @@ class TestWriteTools:
 
 
 @patch("clawdiney.mcp_server.Config.get_all_vaults")
-@patch("clawdiney.mcp_server._engine_instances", {"default": MagicMock(), "projects": MagicMock()})
+@patch(
+    "clawdiney.mcp_server._engine_instances",
+    {"default": MagicMock(), "projects": MagicMock()},
+)
 class TestHealthCheck:
     def test_health_check_shows_vaults(self, mock_get_all_vaults):
         mock_get_all_vaults.return_value = {

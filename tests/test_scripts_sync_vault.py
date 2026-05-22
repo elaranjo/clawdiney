@@ -57,7 +57,9 @@ class TestSyncVault:
             patch.object(sync_mod, "setup_logging"),
             patch.object(sync_mod, "show_status") as mock_status,
         ):
-            with patch("sys.argv", ["sync_vault.py", "--status", "--vault", "projects"]):
+            with patch(
+                "sys.argv", ["sync_vault.py", "--status", "--vault", "projects"]
+            ):
                 sync_mod.main()
             mock_status.assert_called_once_with(vault_name="projects")
 
@@ -117,7 +119,9 @@ class TestSyncVault:
             patch("clawdiney.indexer.create_chroma_client"),
             patch("clawdiney.indexer.create_collection"),
             patch("clawdiney.indexer.create_neo4j_driver") as mock_driver,
-            patch("clawdiney.incremental_indexer.incremental_sync_all_vaults") as mock_sync_all,
+            patch(
+                "clawdiney.incremental_indexer.incremental_sync_all_vaults"
+            ) as mock_sync_all,
         ):
             mock_driver.return_value.__enter__.return_value = MagicMock()
             mock_sync_all.return_value = {}
