@@ -1,5 +1,3 @@
-import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -40,6 +38,7 @@ class TestCreateCollection(unittest.TestCase):
         collection = create_collection(self.client, vault_name="projects")
         args, kwargs = self.client.get_or_create_collection.call_args
         self.assertEqual(kwargs["name"], f"{COLLECTION_PREFIX}projects")
+        self.assertEqual(collection, self.collection_mock)
 
 
 class TestBuildChunkPayload(unittest.TestCase):

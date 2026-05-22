@@ -2,13 +2,12 @@
 """Cliente simples para testar o servidor MCP do Clawdiney."""
 
 import asyncio
-import os
+from unittest.mock import patch
 
 import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-from unittest.mock import patch
 
 class MockToolResult:
     def __init__(self, content):

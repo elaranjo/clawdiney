@@ -61,15 +61,15 @@ def show_status(vault_name: str = ""):
 
 def run_sync(full: bool = False, vault_name: str = ""):
     """Run sync operation for one or all vaults."""
-    from ..indexer import (
-        create_chroma_client,
-        create_collection,
-        create_neo4j_driver,
-    )
     from ..incremental_indexer import (
         full_sync,
         incremental_sync,
         incremental_sync_all_vaults,
+    )
+    from ..indexer import (
+        create_chroma_client,
+        create_collection,
+        create_neo4j_driver,
     )
 
     chroma_client = create_chroma_client()

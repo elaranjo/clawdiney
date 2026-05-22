@@ -1,6 +1,9 @@
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from clawdiney.query_engine import BrainQueryEngine
+
 
 @pytest.fixture(autouse=True)
 def mock_brain_deps():

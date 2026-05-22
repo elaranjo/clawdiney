@@ -1,9 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import clawdiney.vault_writer as vw_mod
 import pytest
 
+import clawdiney.vault_writer as vw_mod
 from clawdiney.vault_writer import VaultWriter, get_writer
 
 
@@ -145,7 +145,6 @@ def test_append_to_daily_with_vault_name(vault_root: Path) -> None:
     writer.indexer._get_all_vault_files = MagicMock(return_value={})
     writer.indexer._compute_file_hash = MagicMock(return_value="abc")
 
-    from datetime import date
 
     result = writer.append_to_daily("Daily content", date="2025-01-15")
     assert result["success"] is True

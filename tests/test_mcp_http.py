@@ -3,12 +3,11 @@
 
 import asyncio
 import json
-import os
+from unittest.mock import patch
 
 import httpx
 import pytest
 
-from unittest.mock import patch
 
 class MockHttpxResponse:
     def __init__(self, json_data):

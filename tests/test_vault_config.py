@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from clawdiney.vault_config import VaultConfig, load_vault_config, validate_linked_vaults
+from clawdiney.vault_config import (
+    VaultConfig,
+    load_vault_config,
+    validate_linked_vaults,
+)
 
 
 def _write_toml(path: Path, content: str) -> Path:

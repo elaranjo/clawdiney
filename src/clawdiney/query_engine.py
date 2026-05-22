@@ -588,8 +588,6 @@ class BrainQueryEngine:
         seen_paths: set[str] = set()
         searched_vaults: set[str] = set()
 
-        fetch_n = n_results * 3 if use_mmr else n_results
-
         for vname in fallback_chain:
             if len(all_docs) >= n_results:
                 break

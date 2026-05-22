@@ -10,7 +10,7 @@ from .constants import (
     CHUNK_SIZE_DEFAULT,
     RERANK_THRESHOLD_DEFAULT,
 )
-from .vault_config import load_vault_config, validate_linked_vaults, VaultConfig
+from .vault_config import VaultConfig, load_vault_config, validate_linked_vaults
 
 logger = logging.getLogger(__name__)
 

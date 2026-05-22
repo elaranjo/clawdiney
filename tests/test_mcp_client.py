@@ -2,12 +2,11 @@
 """Script para testar a conexão com o servidor MCP do Clawdiney."""
 
 import json
-import os
+from unittest.mock import patch
 
 import pytest
 import requests
 
-from unittest.mock import patch
 
 class MockResponse:
     def __init__(self, json_data):
@@ -16,7 +15,7 @@ class MockResponse:
         self.text = f"data: {json.dumps(json_data)}\n"
 
     def iter_lines(self):
-        yield f"data: {json.dumps(self.json_data)}".encode("utf-8")
+        yield f"data: {json.dumps(self.json_data)}".encode()
 
 
 def mock_post(url, headers=None, json_data=None, json=None, stream=False):

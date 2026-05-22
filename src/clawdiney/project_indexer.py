@@ -14,7 +14,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import tomli
 
@@ -191,7 +190,7 @@ class ProjectIndexer:
         sanitized = SAFE_FILENAME_PATTERN.sub("_", name)[:100]
         return f"{sanitized}.md"
 
-    def _analyze_project(self, project_path: Path) -> Optional[ProjectInfo]:
+    def _analyze_project(self, project_path: Path) -> ProjectInfo | None:
         """Analyze a single project directory.
 
         Args:
@@ -237,7 +236,7 @@ class ProjectIndexer:
 
         return info
 
-    def _detect_project_type(self, project_path: Path) -> Optional[str]:
+    def _detect_project_type(self, project_path: Path) -> str | None:
         """Detect the project type based on configuration files."""
         for file_name, project_type in self.PROJECT_FILES.items():
             if (project_path / file_name).exists():

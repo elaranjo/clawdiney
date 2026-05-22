@@ -1,6 +1,5 @@
 """Tests for clawdiney.config.Config multi-vault support."""
 
-import os
 from pathlib import Path
 
 import pytest

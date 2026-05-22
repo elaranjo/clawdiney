@@ -6,7 +6,6 @@ Defines which files to index and which to ignore for optimal token usage.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -146,7 +145,7 @@ def get_config_for_project(project_name: str) -> IndexConfig:
     return PROJECT_CONFIGS.get(project_name, DEFAULT_CONFIG)
 
 
-def should_index_file(file_path: Path, project_name: Optional[str] = None) -> bool:
+def should_index_file(file_path: Path, project_name: str | None = None) -> bool:
     """Determine if a file should be indexed based on configuration."""
     import fnmatch
 
