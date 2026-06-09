@@ -53,10 +53,9 @@ def create_collection(
     client: chromadb.HttpClient, vault_name: str | None = None
 ) -> chromadb.Collection:
     name = f"{COLLECTION_PREFIX}{vault_name}" if vault_name else "obsidian_vault"
-    return client.get_or_create_collection(
-        name=name,
-        embedding_function=OllamaEmbedding(model_name=Config.MODEL_NAME),
-    )
+    # No embedding_function — embeddings are generated explicitly before upsert.
+    # Avoids ChromaDB config deserialization bug (KeyError: '_type') on existing collections.
+    return client.get_or_create_collection(name=name)
 
 
 def create_neo4j_driver() -> Any:
@@ -121,7 +120,7 @@ def build_chunk_payload(
         if vault_name:
             metadata["vault"] = vault_name
         if note_record["tags"]:
-            metadata["tags"] = note_record["tags"]
+            metadata["tags"] = ",".join(note_record["tags"])
 
         ids.append(f"{note_record['path']}::{index}")
         documents.append(
@@ -137,6 +136,7 @@ def index_note_records(
     note_records: list[NoteRecord],
     vault_name: str = "",
 ) -> int:
+    embedding_fn = OllamaEmbedding(model_name=Config.MODEL_NAME)
     indexed_chunks = 0
 
     for note_record in note_records:
@@ -145,7 +145,8 @@ def index_note_records(
         )
         if not ids:
             continue
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        embeddings = embedding_fn(documents)
+        collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
         indexed_chunks += len(ids)
 
     return indexed_chunks

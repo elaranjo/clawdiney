@@ -190,7 +190,10 @@ class IncrementalIndexer:
                 note_record, vault_name=vault_name
             )
             if ids:
-                collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+                from .indexer import OllamaEmbedding
+                from .config import Config as _Config
+                embeddings = OllamaEmbedding(model_name=_Config.MODEL_NAME)(documents)
+                collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
 
             # Sync to Neo4j (single note, incremental mode)
             sync_graph(
