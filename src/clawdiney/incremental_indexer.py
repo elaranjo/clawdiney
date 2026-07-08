@@ -1,341 +1,168 @@
 """
-Incremental indexing with state tracking for Clawdiney.
+Incremental indexing against the embedded SQLite store.
 
-Tracks file hashes to only re-index changed files.
-State is persisted to .clawdiney_state.json in the vault root.
+Change detection compares SHA-256 content hashes stored in brain.db's
+documents table (no separate state file needed) against the vault files
+on disk. Only changed files are re-embedded and re-indexed.
 """
 
-import hashlib
-import json
 import logging
-import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import chromadb
-from neo4j import GraphDatabase
-
 from .config import Config
+from .embedding_providers import EmbeddingProvider, default_provider
 from .indexer import (
-    build_chunk_payload,
     build_note_record,
+    compute_content_hash,
     discover_vault_files,
-    sync_graph,
+    index_note,
 )
+from .storage import BrainStorage, get_storage
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = ".clawdiney_state.json"
-STATE_SCHEMA_VERSION = 1
-
 
 class IncrementalIndexer:
-    """Manages incremental indexing with state persistence."""
+    """Detects and syncs vault changes using content hashes in brain.db."""
 
-    def __init__(self, vault_root: Path):
-        self.vault_root = vault_root
-        self.state_path = vault_root / STATE_FILE
-        self.state: dict[str, Any] = {
-            "schema_version": STATE_SCHEMA_VERSION,
-            "files": {},
-            "last_full_sync": None,
-        }
-        self._load_state()
+    def __init__(
+        self,
+        vault_root: Path,
+        vault_name: str = "default",
+        storage: BrainStorage | None = None,
+        provider: EmbeddingProvider | None = None,
+    ):
+        self.vault_root = Path(vault_root).expanduser().resolve()
+        self.vault_name = vault_name
+        self.storage = storage or get_storage()
+        self._provider = provider
 
-    def _load_state(self) -> None:
-        """Load state from disk if exists."""
-        if self.state_path.exists():
-            try:
-                with open(self.state_path, encoding="utf-8") as f:
-                    loaded = json.load(f)
+    @property
+    def provider(self) -> EmbeddingProvider:
+        if self._provider is None:
+            self._provider = default_provider()
+        return self._provider
 
-                # Handle schema versioning
-                version = loaded.get("schema_version", 1)
-                if version > STATE_SCHEMA_VERSION:
-                    logger.warning(
-                        f"State file has newer schema version {version} "
-                        f"(this version supports up to {STATE_SCHEMA_VERSION}). "
-                        f"Attempting to load anyway."
-                    )
-                elif version < STATE_SCHEMA_VERSION:
-                    logger.info(
-                        f"Upgrading state schema from v{version} to v{STATE_SCHEMA_VERSION}"
-                    )
-                    loaded = self._upgrade_state(loaded, version)
-
-                self.state = loaded
-                logger.info(f"Loaded state from {self.state_path} (schema v{version})")
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to load state: {e}. Starting fresh.")
-        else:
-            logger.info("No existing state found. Will perform full sync.")
-
-    def _save_state(self) -> None:
-        """Persist state to disk atomically using temp file + rename."""
-        # Ensure schema version is always set
-        self.state["schema_version"] = STATE_SCHEMA_VERSION
-
-        # Write to temp file first for atomicity
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_path = tempfile.mkstemp(
-            suffix=".tmp", dir=self.state_path.parent, prefix=".state_"
-        )
-        try:
-            with open(fd, "w", encoding="utf-8") as f:
-                json.dump(self.state, f, indent=2)
-            # Atomic rename
-            Path(temp_path).replace(self.state_path)
-            logger.debug(f"Saved state atomically to {self.state_path}")
-        except Exception as e:
-            logger.error(f"Failed to save state: {e}")
-            # Cleanup temp file on failure
-            Path(temp_path).unlink(missing_ok=True)
-            raise
-
-    def _upgrade_state(
-        self, state: dict[str, Any], from_version: int
-    ) -> dict[str, Any]:
-        """Upgrade state schema from older version to current."""
-        upgraded = state.copy()
-
-        # v1 -> v2: (future upgrades go here)
-        # Example:
-        # if from_version < 2:
-        #     upgraded["new_field"] = "default"
-
-        # For now, just ensure base fields exist
-        if "files" not in upgraded:
-            upgraded["files"] = {}
-        if "last_full_sync" not in upgraded:
-            upgraded["last_full_sync"] = None
-
-        return upgraded
-
-    def _compute_file_hash(self, file_path: Path) -> str:
-        """Compute SHA-256 hash of a file."""
-        content = file_path.read_bytes()
-        return hashlib.sha256(content).hexdigest()
-
-    def _get_all_vault_files(self) -> dict[Path, str]:
-        """Get all markdown files with their current hashes."""
-        files = {}
+    def _current_file_hashes(self) -> dict[str, str]:
+        """Map of vault-relative path -> SHA-256 for files on disk."""
+        hashes: dict[str, str] = {}
         for file_path in discover_vault_files(self.vault_root):
             try:
-                files[file_path] = self._compute_file_hash(file_path)
+                relative = file_path.relative_to(self.vault_root).as_posix()
+                hashes[relative] = compute_content_hash(file_path.read_bytes())
             except OSError as e:
                 logger.warning(f"Could not read {file_path}: {e}")
-        return files
+        return hashes
 
-    def detect_changes(self) -> tuple[list[Path], list[Path]]:
+    def detect_changes(self) -> tuple[list[str], list[str]]:
         """
-        Detect new and modified files since last sync.
+        Compare disk against brain.db.
 
         Returns:
-            Tuple of (new_or_modified_files, deleted_files)
+            Tuple of (new_or_modified_relative_paths, deleted_relative_paths)
         """
-        current_files = self._get_all_vault_files()
-        stored_files = self.state.get("files", {})
+        current = self._current_file_hashes()
+        stored = self.storage.get_document_hashes(self.vault_name)
 
-        new_or_modified = []
-        for file_path, current_hash in current_files.items():
-            stored_hash = stored_files.get(str(file_path))
-            if stored_hash != current_hash:
-                new_or_modified.append(file_path)
-
-        deleted = []
-        for stored_path in stored_files.keys():
-            if stored_path not in current_files:
-                deleted.append(Path(stored_path))
-
+        new_or_modified = [
+            path for path, digest in current.items() if stored.get(path) != digest
+        ]
+        deleted = [path for path in stored if path not in current]
         return new_or_modified, deleted
 
-    def update_state(self, file_path: Path, file_hash: str | None = None) -> None:
-        """Update state for a single file (add/update or remove)."""
-        if file_hash is not None:
-            self.state["files"][str(file_path)] = file_hash
-        else:
-            self.state["files"].pop(str(file_path), None)
-        self._save_state()
-
-    def mark_all_synced(self, files: dict[Path, str]) -> None:
-        """Mark all files as synced in state."""
-        self.state["files"] = {str(path): hash for path, hash in files.items()}
-        self._save_state()
-
-    def sync_file(
-        self,
-        file_path: Path,
-        collection: chromadb.Collection,
-        neo4j_driver: GraphDatabase,
-        strategy: str | None = None,
-        vault_name: str = "",
-    ) -> bool:
+    def sync_file(self, relative_path: str, strategy: str | None = None) -> int:
         """
-        Sync a single file to both ChromaDB and Neo4j.
+        Re-index a single note (atomic replace in one transaction).
 
-        Returns True if successful, False otherwise.
+        Returns number of chunks indexed (0 if file empty/skipped).
         """
-        try:
-            note_record = build_note_record(
-                file_path, self.vault_root, strategy=strategy
-            )
-            if note_record is None:
-                logger.warning(f"Skipping empty file: {file_path.name}")
-                self.update_state(file_path, None)  # Remove from state
-                return False
+        file_path = self.vault_root / relative_path
+        note_record = build_note_record(file_path, self.vault_root, strategy=strategy)
+        if note_record is None:
+            logger.warning(f"Skipping empty file: {relative_path}")
+            self.storage.delete_note(self.vault_name, relative_path)
+            return 0
+        chunks = index_note(
+            self.storage, self.provider, note_record, vault_name=self.vault_name
+        )
+        logger.info(f"Synced: {relative_path} ({chunks} chunks)")
+        return chunks
 
-            # Index in ChromaDB
-            ids, documents, metadatas = build_chunk_payload(
-                note_record, vault_name=vault_name
-            )
-            if ids:
-                from .indexer import OllamaEmbedding
-                from .config import Config as _Config
-                embeddings = OllamaEmbedding(model_name=_Config.MODEL_NAME)(documents)
-                collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
-
-            # Sync to Neo4j (single note, incremental mode)
-            sync_graph(
-                neo4j_driver, [note_record], incremental=True, vault_name=vault_name
-            )
-
-            # Update state
-            file_hash = self._compute_file_hash(file_path)
-            self.update_state(file_path, file_hash)
-
-            logger.info(
-                f"Synced: {note_record['path']} ({len(note_record['chunks'])} chunks)"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to sync {file_path}: {e}")
-            return False
-
-    def remove_deleted_from_chroma(
-        self, deleted_files: list[Path], collection: chromadb.Collection
-    ) -> int:
-        """Remove deleted files from ChromaDB. Returns count of deleted chunks."""
-        deleted_count = 0
-        for file_path in deleted_files:
-            relative_path = file_path.relative_to(self.vault_root).as_posix()
-            # Delete all chunks with this path
-            try:
-                # Get all IDs for this file
-                existing = collection.get(
-                    where={"path": relative_path},
-                    include=[],
-                )
-                if existing["ids"]:
-                    collection.delete(ids=existing["ids"])
-                    deleted_count += len(existing["ids"])
-                    logger.info(
-                        f"Removed {len(existing['ids'])} chunks for deleted: {relative_path}"
-                    )
-            except Exception as e:
-                logger.warning(f"Could not delete chunks for {relative_path}: {e}")
-
-            # Remove from state
-            self.update_state(file_path, None)
-
-        return deleted_count
+    def remove_deleted(self, deleted_paths: list[str]) -> int:
+        """Remove deleted notes from the store. Returns chunks removed."""
+        removed = 0
+        for relative_path in deleted_paths:
+            removed += self.storage.delete_note(self.vault_name, relative_path)
+            logger.info(f"Removed deleted note: {relative_path}")
+        return removed
 
 
 def incremental_sync(
     vault_root: Path | str | None = None,
-    collection: chromadb.Collection | None = None,
-    neo4j_driver: Any | None = None,
+    storage: BrainStorage | None = None,
     strategy: str | None = None,
     force_full: bool = False,
     vault_name: str = "",
+    provider: EmbeddingProvider | None = None,
 ) -> dict[str, Any]:
     """
     Perform incremental sync of the vault.
 
     Args:
         vault_root: Path to Obsidian vault
-        collection: ChromaDB collection (created if None)
-        neo4j_driver: Neo4j driver (created if None)
+        storage: BrainStorage (process singleton if None)
         strategy: Chunking strategy
-        force_full: If True, perform full sync ignoring state
+        force_full: If True, re-index every file regardless of hashes
         vault_name: Vault name for multi-vault support. If provided, uses
-                    Config.get_vault_path(vault_name) as vault_root (overrides vault_root).
+                    Config.get_vault_path(vault_name) as vault_root.
+        provider: EmbeddingProvider (config default if None)
 
     Returns:
         Summary dict with sync statistics
     """
-    from .indexer import (
-        create_chroma_client,
-        create_collection,
-        create_neo4j_driver,
-    )
-
     if vault_name:
         vault_root = Config.get_vault_path(vault_name)
     vault_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
-    own_collection = collection is None
-    own_driver = neo4j_driver is None
+    effective_vault = vault_name or "default"
 
-    if own_collection:
-        chroma_client = create_chroma_client()
-        collection = create_collection(chroma_client, vault_name=vault_name or None)
-    if own_driver:
-        neo4j_driver = create_neo4j_driver()
-
-    indexer = IncrementalIndexer(vault_root)
+    indexer = IncrementalIndexer(
+        vault_root, vault_name=effective_vault, storage=storage, provider=provider
+    )
 
     if force_full:
         logger.info("Force full sync requested")
-        changes_dict: dict[Path, str] = indexer._get_all_vault_files()
-        changes: list[Path] = list(changes_dict.keys())
-        deleted: list[Path] = []
-        is_full_sync = True
+        changes = list(indexer._current_file_hashes().keys())
+        deleted = [
+            path
+            for path in indexer.storage.get_document_hashes(effective_vault)
+            if path not in set(changes)
+        ]
+        sync_type = "full"
     else:
-        new_or_modified, deleted = indexer.detect_changes()
-        changes = new_or_modified
-        is_full_sync = False
+        changes, deleted = indexer.detect_changes()
+        sync_type = "incremental"
 
     logger.info(f"Detected {len(changes)} new/modified files, {len(deleted)} deleted")
 
-    # Process changes
     synced_files = 0
     indexed_chunks = 0
+    for relative_path in changes:
+        try:
+            chunks = indexer.sync_file(relative_path, strategy=strategy)
+            if chunks:
+                synced_files += 1
+                indexed_chunks += chunks
+        except Exception as e:
+            logger.error(f"Failed to sync {relative_path}: {e}")
 
-    for file_path in changes:
-        if indexer.sync_file(
-            file_path,
-            collection,
-            neo4j_driver,
-            strategy=strategy,
-            vault_name=vault_name,
-        ):
-            synced_files += 1
-            # Count chunks
-            note_record = build_note_record(file_path, vault_root, strategy=strategy)
-            if note_record:
-                indexed_chunks += len(note_record["chunks"])
-
-    # Remove deleted files
     if deleted:
-        deleted_chunks = indexer.remove_deleted_from_chroma(deleted, collection)
+        deleted_chunks = indexer.remove_deleted(deleted)
         logger.info(f"Removed {deleted_chunks} chunks from deleted files")
-
-    # If this was a full sync, update state with all files
-    if is_full_sync:
-        all_files = indexer._get_all_vault_files()
-        indexer.mark_all_synced(all_files)
-        indexer.state["last_full_sync"] = datetime.now().isoformat()
-
-    indexer._save_state()
-
-    # Cleanup: remove orphan Tag nodes from Neo4j
-    with neo4j_driver.session() as session:
-        session.run("MATCH (t:Tag) WHERE NOT (t)<-[:HAS_TAG]-() DELETE t")
 
     result = {
         "vault_root": str(vault_root),
-        "sync_type": "full" if is_full_sync else "incremental",
+        "sync_type": sync_type,
         "files_synced": synced_files,
         "files_deleted": len(deleted),
         "indexed_chunks": indexed_chunks,
@@ -347,36 +174,36 @@ def incremental_sync(
 
 def full_sync(
     vault_root: Path | str | None = None,
-    collection: chromadb.Collection | None = None,
-    neo4j_driver: Any | None = None,
+    storage: BrainStorage | None = None,
     strategy: str | None = None,
     vault_name: str = "",
+    provider: EmbeddingProvider | None = None,
 ) -> dict[str, Any]:
     """Perform a full sync of the vault."""
     return incremental_sync(
         vault_root=vault_root,
-        collection=collection,
-        neo4j_driver=neo4j_driver,
+        storage=storage,
         strategy=strategy,
         force_full=True,
         vault_name=vault_name,
+        provider=provider,
     )
 
 
 def incremental_sync_all_vaults(
-    collection: chromadb.Collection | None = None,
-    neo4j_driver: Any | None = None,
+    storage: BrainStorage | None = None,
     strategy: str | None = None,
     force_full: bool = False,
+    provider: EmbeddingProvider | None = None,
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     for vault_name in Config.get_all_vaults():
         logger.info(f"Incremental sync for vault '{vault_name}'")
         results[vault_name] = incremental_sync(
-            collection=collection,
-            neo4j_driver=neo4j_driver,
+            storage=storage,
             strategy=strategy,
             force_full=force_full,
             vault_name=vault_name,
+            provider=provider,
         )
     return results

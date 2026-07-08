@@ -22,12 +22,15 @@ Clawdiney is a **multi-vault** knowledge system. It indexes multiple Obsidian va
 
 Core capabilities:
 
-- **Multi-Vault Architecture:** Each project gets its own vault with isolated data (separate ChromaDB collection, namespaced Neo4j nodes)
+- **Zero-infrastructure storage (v0.2.0):** Everything lives in a single local SQLite file (`brain.db`) — vectors via `sqlite-vec`, full-text via FTS5, knowledge graph via relational tables. **No Docker, no Neo4j, no ChromaDB, no Redis.**
+- **Hybrid Search:** BM25 (exact terms, acronyms, identifiers) + semantic vectors, fused with Reciprocal Rank Fusion; optional cross-encoder reranking (`pip install clawdiney[rerank]`)
+- **Multi-Vault Architecture:** Each project gets its own vault with isolated data (vault-scoped rows in the same database)
 - **CWD Auto-Detection:** The system detects which vault to use based on your current working directory — no manual switching
-- **Semantic Search:** Finds patterns, SOPs and components by meaning (not just keywords)
-- **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]`  
+- **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]` and shared tags
 - **Linking & Fallback:** Vaults can link to related vaults (e.g., SDK projects link to their parent project). Searches cascade through the chain: current vault → linked vaults → general
 - **Native Integration:** Connects to MCP-compatible agents (OpenCode, Claude Code, etc.) via SSE or stdio
+
+> **Migrating from v0.1.x (Docker stack)?** The Neo4j/ChromaDB/Redis containers are no longer used. Just install v0.2.0, keep Ollama running, and run `clawdiney-index` once to rebuild the index into `brain.db`. Your vault files are the source of truth — nothing is lost. Old Docker volumes can be removed with `docker compose -f docker/docker-compose.yml down -v`.
 
 ---
 
@@ -37,10 +40,16 @@ Before starting, make sure you have installed:
 
 | Software | Minimum Version | Link |
 |----------|-----------------|------|
-| **Docker** | 20.x+ | [docker.com](https://docs.docker.com/get-docker/) |
-| **Docker Compose** | 2.x+ | Included in Docker Desktop or `apt install docker-compose-plugin` |
-| **Ollama** | 0.1.x+ | [ollama.com](https://ollama.com/) |
+| **Ollama** | 0.3.x+ | [ollama.com](https://ollama.com/) (embedding model `bge-m3`) |
 | **Python** | 3.10+ | Usually already installed on Unix systems. If not: `apt install python3` or `brew install python@3.12` |
+
+Optional:
+
+| Extra | Install | What it adds |
+|-------|---------|--------------|
+| **Reranker** | `pip install clawdiney[rerank]` | Cross-encoder reranking (`BAAI/bge-reranker-v2-m3`, ~2GB RAM). Without it, searches use RRF ordering — still fully functional. |
+
+**Configuration:** `BRAIN_DB_PATH` env var sets the database location (default: `~/.clawdiney/brain.db`).
 
 **Supported Systems:**
 - ✅ Linux (Ubuntu, Debian, Fedora, Arch, etc.)
@@ -78,14 +87,12 @@ The `setup_brain.sh` script automatically executes:
 
 | Step | Action |
 |------|--------|
-| 🔍 | Checks if Docker, Docker Compose and Ollama are installed |
+| 🔍 | Checks if Ollama is installed |
 | 📝 | Creates `.env` with default settings (if it doesn't exist) |
-| 🐳 | Starts Neo4j + ChromaDB containers via Docker Compose |
 | 🐍 | Creates Python virtual environment (`venv`) |
-| 📦 | Installs Python dependencies (`neo4j`, `chromadb`, `ollama`, etc.) |
-| ✅ | **Checks and auto-repairs** missing dependencies |
+| 📦 | Installs Python dependencies (`sqlite-vec`, `ollama`, `mcp`, etc.) |
 | 🦙 | Downloads embedding model (`bge-m3`) via Ollama |
-| 🧠 | Indexes your vault(s) in the database |
+| 🧠 | Indexes your vault(s) into `brain.db` |
 
 ---
 

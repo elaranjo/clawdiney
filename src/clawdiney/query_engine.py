@@ -1,32 +1,28 @@
+"""
+Hybrid query engine over the embedded SQLite store.
+
+Retrieval pipeline:
+  BM25 (FTS5) + vector KNN (sqlite-vec) -> RRF fusion (k=60)
+  -> dedup by note -> optional cross-encoder rerank -> context briefing.
+"""
+
 import logging
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, TypedDict
-
-import chromadb
-import httpx
-import ollama
-from neo4j import GraphDatabase
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from .chunking import Chunk, markdown_chunking
 from .config import Config
 from .constants import (
-    RERANK_BATCH_SIZE,
-    RERANK_TIMEOUT_SECONDS,
+    RRF_K,
     SEARCH_EXPAND_GRAPH_DEFAULT,
     SEARCH_N_RESULTS_DEFAULT,
     SEARCH_USE_RERANK_DEFAULT,
 )
+from .embedding_providers import EmbeddingProvider, default_provider
 from .logging_config import setup_logging
-from .query_cache import QueryCache
-from .rag_optimizer import MMRReranker, QueryPreprocessor
+from .rag_optimizer import QueryPreprocessor
+from .reranker import get_reranker
+from .storage import BrainStorage, get_storage
 from .vault_config import VaultConfig, load_vault_config
 
 logger = logging.getLogger(__name__)
@@ -48,66 +44,56 @@ class Note(TypedDict):
     content: str
 
 
+def rrf_fuse(
+    ranked_lists: list[list[dict[str, Any]]], k: int = RRF_K
+) -> list[dict[str, Any]]:
+    """
+    Reciprocal Rank Fusion over ranked chunk-row lists.
+
+    score(item) = sum over lists of 1 / (k + rank). Items are identified by
+    chunk_id. Returns fused rows, best first.
+    """
+    scores: dict[int, float] = {}
+    rows: dict[int, dict[str, Any]] = {}
+    for ranked in ranked_lists:
+        for rank, row in enumerate(ranked, start=1):
+            chunk_id = row["chunk_id"]
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank)
+            rows.setdefault(chunk_id, row)
+    ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    return [rows[chunk_id] for chunk_id, _score in ordered]
+
+
 class BrainQueryEngine:
-    def __init__(self, vault: str | None = None):
+    def __init__(
+        self,
+        vault: str | None = None,
+        storage: BrainStorage | None = None,
+        provider: EmbeddingProvider | None = None,
+    ):
         self.current_vault = vault or Config.get_default_vault()
 
         vault_path = Config.get_vault_path(self.current_vault)
-        if isinstance(vault_path, (str, Path)):
-            self.vault_root = Path(vault_path).expanduser().resolve()
-        else:
-            self.vault_root = Path(Config.VAULT_PATH).expanduser().resolve()
+        self.vault_root = Path(vault_path).expanduser().resolve()
 
         self.vault_config: VaultConfig | None = None
         try:
             if self.vault_root.joinpath("clawdiney.toml").exists():
                 self.vault_config = load_vault_config(self.vault_root)
-        except Exception:
-            pass
-
-        # ChromaDB Setup - Always use HTTP client
-        chroma_config = Config.get_chroma_client_config()
-        self.chroma_client = chromadb.HttpClient(
-            host=chroma_config["host"], port=chroma_config["port"]
-        )
-        # Configura timeout para 300 segundos no cliente httpx subjacente
-        self.chroma_client.timeout = httpx.Timeout(300.0)
-
-        collection_name = f"vault_{self.current_vault}"
-        try:
-            self.vector_collection = self.chroma_client.get_collection(
-                name=collection_name
-            )
-        except Exception:
-            self.vector_collection = self.chroma_client.get_collection(
-                name="obsidian_vault"
+        except Exception as exc:
+            logger.warning(
+                "Failed to load vault config from %s: %s", self.vault_root, exc
             )
 
-        # Internal collection cache for fallback lookups
-        self._collection_cache: dict[str, Any] = {}
-
-        # Neo4j Setup
-        self.neo4j_driver = GraphDatabase.driver(
-            Config.NEO4J_URI,
-            auth=(Config.NEO4J_USER, Config.get_neo4j_password()),
-        )
-
-        # Query Cache Setup (Redis)
-        self.cache = QueryCache() if Config.ENABLE_QUERY_CACHE else None
-
-        # RAG Optimizers
+        self.storage = storage or get_storage()
+        self.provider = provider or default_provider()
         self.query_preprocessor = QueryPreprocessor(
             expand_abbreviations=True, remove_stop_words=False
         )
-        self.mmr_reranker = MMRReranker(lambda_param=0.7)
 
     def close(self) -> None:
-        """Close all database connections (Neo4j + ChromaDB + Redis)."""
-        self.neo4j_driver.close()
-        if hasattr(self.chroma_client, "close"):
-            self.chroma_client.close()
-        if self.cache:
-            self.cache.close()
+        """Close storage connections owned by this thread."""
+        self.storage.close()
 
     def __enter__(self) -> "BrainQueryEngine":
         """Enter context manager, returning the engine instance."""
@@ -119,19 +105,16 @@ class BrainQueryEngine:
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Exit context manager, closing all database connections."""
+        """Exit context manager, closing storage connections."""
         self.close()
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=retry_if_exception_type((ConnectionError, TimeoutError, RuntimeError)),
-        reraise=True,
-    )
     def get_embedding(self, text: str) -> list[float]:
-        """Get embedding with exponential backoff retry."""
-        response = ollama.embeddings(model=Config.MODEL_NAME, prompt=text)
-        return response["embedding"]
+        """Embed text through the configured provider (retry inside provider)."""
+        return self.provider.embed(text)
+
+    # ------------------------------------------------------------------
+    # Note resolution / local file access
+    # ------------------------------------------------------------------
 
     def _normalize_note_path(self, note_path: str) -> str:
         """Return a canonical vault-relative path and ensure it stays inside the vault."""
@@ -258,271 +241,18 @@ class BrainQueryEngine:
             for index, chunk in enumerate(chunks)
         ]
 
+    # ------------------------------------------------------------------
+    # Graph
+    # ------------------------------------------------------------------
+
     def get_related_notes(self, note_ref: str, vault: str | None = None) -> list[str]:
-        """
-        Fetches notes that are linked to the given note in Neo4j, including tag-based relationships.
-
-        Uses the optimized schema:
-        - (:Note)-[:LINKS_TO]->(:Note) for wikilinks
-        - (:Note)-[:HAS_TAG]->(:Tag) for tags (avoids O(n²) cartesian join)
-        """
+        """Notes linked to note_ref via WikiLinks (either direction) or shared tags."""
         vault_name = vault or self.current_vault
-        with self.neo4j_driver.session() as session:
-            query = """
-            MATCH (n:Note {vault: $vault})-[:LINKS_TO]-(related:Note {vault: $vault})
-            WHERE n.path = $note_ref OR n.name = $note_ref
-            WITH collect(related) AS linked_notes
+        return self.storage.get_related_notes(note_ref, vault_name)
 
-            MATCH (n:Note {vault: $vault})-[:HAS_TAG]->(t:Tag)<-[:HAS_TAG]-(related:Note {vault: $vault})
-            WHERE n.path = $note_ref OR n.name = $note_ref
-            WITH linked_notes, collect(DISTINCT related) AS tag_related
-
-            // Combine and deduplicate
-            WITH linked_notes + tag_related AS all_related
-            UNWIND all_related AS related
-            RETURN DISTINCT related.name AS name, related.path AS path
-            """
-            result = session.run(query, note_ref=note_ref, vault=vault_name)
-            return [record["path"] or record["name"] for record in result]
-
-    def _score_single_doc(self, query: str, doc: str) -> float | None:
-        """Score a single document against query. Returns score or None."""
-        combined = f"Output only the relevance score between 0 and 1. Query: {query}\nDocument: {doc}"
-        try:
-            response = ollama.generate(
-                model=Config.RERANK_MODEL_NAME,
-                prompt=combined,
-                options={"temperature": 0},
-            )
-            score_str = response.get("response", "").strip()
-            try:
-                return float(score_str)
-            except ValueError:
-                logger.warning(f"Invalid score format from reranker: {score_str!r}")
-                return None
-        except (TimeoutError, FuturesTimeoutError) as e:
-            logger.warning(f"Rerank timeout for document: {e}")
-            return None
-        except (ConnectionError, RuntimeError) as e:
-            logger.warning(f"Rerank model error: {e}")
-            return None
-
-    def rerank_results(
-        self,
-        query: str,
-        results: list[tuple[str, dict[str, Any]]],
-        timeout: int = RERANK_TIMEOUT_SECONDS,
-        batch_size: int = RERANK_BATCH_SIZE,
-    ) -> list[tuple[str, dict[str, Any]]]:
-        """
-        Rerank results using cross-encoder model with timeout and batch processing.
-
-        Args:
-            query: Search query string
-            results: List of (document, metadata) tuples
-            timeout: Maximum seconds for entire reranking operation (default: 30s)
-            batch_size: Number of documents to process in parallel (default: 5)
-
-        Returns:
-            Reranked results sorted by score, or original results if rerank fails/times out.
-        """
-        if not results:
-            return results
-
-        # Score documents in parallel
-        scored_results, successful_scores = self._score_documents_parallel(
-            query, results, timeout, batch_size
-        )
-
-        # Fallback if no scores were successful
-        if successful_scores == 0:
-            logger.info("No successful rerank scores, falling back to original ranking")
-            return results
-
-        # Filter and sort results
-        return self._filter_and_sort_results(scored_results, results)
-
-    def _score_documents_parallel(
-        self,
-        query: str,
-        results: list[tuple[str, dict[str, Any]]],
-        timeout: int,
-        batch_size: int,
-    ) -> tuple[list[tuple[float | None, str, dict[str, Any]]], int]:
-        """
-        Score documents in parallel using ThreadPoolExecutor.
-
-        Args:
-            query: Search query string
-            results: List of (document, metadata) tuples
-            timeout: Maximum seconds for entire operation
-            batch_size: Number of concurrent workers
-
-        Returns:
-            Tuple of (scored_results, successful_scores_count)
-        """
-        scored_results: list[tuple[float | None, str, dict[str, Any]]] = []
-        successful_scores = [0]  # Use list for mutability
-
-        try:
-            with ThreadPoolExecutor(max_workers=batch_size) as executor:
-                futures = {
-                    executor.submit(self._score_single_doc, query, doc): (doc, meta)
-                    for doc, meta in results
-                }
-
-                self._process_futures(
-                    futures, timeout, scored_results, successful_scores
-                )
-
-        except Exception as e:
-            logger.error(f"Rerank failed: {e}, using fallback")
-            return [], 0
-
-        return scored_results, successful_scores[0]
-
-    def _process_futures(
-        self,
-        futures: dict,
-        timeout: int,
-        scored_results: list[tuple[float | None, str, dict[str, Any]]],
-        successful_scores: list[int],
-    ) -> None:
-        """
-        Process futures with timeout handling.
-
-        Args:
-            futures: Dict mapping futures to (doc, meta) tuples
-            timeout: Maximum seconds to wait
-            scored_results: List to append results to (modified in place)
-            successful_scores: List with single int counter (modified in place)
-        """
-        pending_futures = set(futures.keys())
-
-        while pending_futures:
-            completed, pending_futures = wait(
-                pending_futures, timeout=timeout, return_when=FIRST_COMPLETED
-            )
-
-            if not completed and pending_futures:
-                logger.warning("Rerank timeout reached, some documents not scored")
-                for future in pending_futures:
-                    doc, meta = futures[future]
-                    scored_results.append((None, doc, meta))
-                break
-
-            for future in completed:
-                doc, meta = futures[future]
-                try:
-                    score = future.result(timeout=0)
-                    if score is not None:
-                        successful_scores[0] += 1
-                    scored_results.append((score, doc, meta))
-                except FuturesTimeoutError:
-                    logger.warning("Document scoring timed out")
-                    scored_results.append((None, doc, meta))
-                except Exception as e:
-                    logger.warning(f"Error scoring document: {e}")
-                    scored_results.append((None, doc, meta))
-
-    def _filter_and_sort_results(
-        self,
-        scored_results: list[tuple[float | None, str, dict[str, Any]]],
-        original_results: list[tuple[str, dict[str, Any]]],
-    ) -> list[tuple[str, dict[str, Any]]]:
-        """
-        Filter scored results by threshold and sort by score.
-
-        Args:
-            scored_results: List of (score, doc, meta) tuples
-            original_results: Original results for fallback
-
-        Returns:
-            Filtered and sorted list of (doc, meta) tuples
-        """
-        threshold = float(Config.RERANK_THRESHOLD)
-        filtered_results = [
-            item
-            for item in scored_results
-            if item[0] is not None and item[0] >= threshold
-        ]
-
-        # If all results filtered out, return original
-        if not filtered_results:
-            logger.info(
-                f"All results below threshold ({threshold}), returning original"
-            )
-            return original_results
-
-        filtered_results.sort(key=lambda x: x[0], reverse=True)
-        return [(doc, meta) for score, doc, meta in filtered_results]
-
-    def _deduplicate_results(
-        self, docs: list[str], metadatas: list[dict[str, Any]]
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """
-        Remove duplicate results based on note path/filename.
-
-        When ChromaDB returns multiple chunks from the same note,
-        keep only the first (highest ranked) occurrence.
-
-        Args:
-            docs: List of document contents
-            metadatas: List of metadata dicts
-
-        Returns:
-            Tuple of (deduplicated_docs, deduplicated_metadatas)
-        """
-        seen_paths = set()
-        unique_docs = []
-        unique_metadatas = []
-
-        for doc, meta in zip(docs, metadatas):
-            note_path = meta.get("path") or meta["filename"]
-            if note_path not in seen_paths:
-                seen_paths.add(note_path)
-                unique_docs.append(doc)
-                unique_metadatas.append(meta)
-
-        return unique_docs, unique_metadatas
-
-    def _diversify_results(
-        self, docs: list[str], metadatas: list[dict[str, Any]], k: int
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """
-        Diversify results using a simple heuristic when MMR embeddings unavailable.
-
-        Selects results from different notes when possible, avoiding multiple
-        chunks from the same source.
-
-        Args:
-            docs: List of document contents
-            metadatas: List of metadata dicts
-            k: Number of results to return
-
-        Returns:
-            Tuple of (diversified_docs, diversified_metadatas)
-        """
-        # Group by note path
-        by_note: dict[str, list[tuple[str, dict[str, Any]]]] = {}
-        for doc, meta in zip(docs, metadatas):
-            note_path = meta.get("path") or meta["filename"]
-            if note_path not in by_note:
-                by_note[note_path] = []
-            by_note[note_path].append((doc, meta))
-
-        # Take one chunk per note until we have k results
-        diversified: list[tuple[str, dict[str, Any]]] = []
-        for note_path, chunks in by_note.items():
-            if len(diversified) >= k:
-                break
-            diversified.append(chunks[0])  # Take first (highest ranked) chunk
-
-        if not diversified:
-            return [], []
-
-        docs_result, metas_result = zip(*diversified)
-        return list(docs_result), list(metas_result)
+    # ------------------------------------------------------------------
+    # Hybrid search
+    # ------------------------------------------------------------------
 
     def _get_fallback_chain(self) -> list[str]:
         chain: list[str] = [self.current_vault]
@@ -534,24 +264,38 @@ class BrainQueryEngine:
             chain.append("general")
         return chain
 
-    def _get_vault_collection(self, vault_name: str) -> Any:
-        if vault_name in self._collection_cache:
-            return self._collection_cache[vault_name]
-        try:
-            collection = self.chroma_client.get_collection(f"vault_{vault_name}")
-            self._collection_cache[vault_name] = collection
-            return collection
-        except Exception:
-            return None
+    def _hybrid_retrieve(
+        self, query: str, vaults: list[str], n_results: int
+    ) -> list[dict[str, Any]]:
+        """BM25 + vector retrieval fused with RRF. Fail-soft per retriever."""
+        fetch_k = n_results * 3
 
-    def _search_vectors_in_collection(
-        self, query: str, collection: Any, n_results: int
-    ) -> tuple[list[str], list[dict[str, Any]], str]:
-        embedding = self.get_embedding(query)
-        results = collection.query(query_embeddings=[embedding], n_results=n_results)
-        docs = results["documents"][0]
-        metadatas = results["metadatas"][0]
-        return docs, metadatas, ""
+        bm25_rows: list[dict[str, Any]] = []
+        try:
+            bm25_rows = self.storage.search_bm25(query, vaults, fetch_k)
+        except Exception as exc:
+            logger.warning("BM25 retrieval failed: %s", exc)
+
+        vector_rows: list[dict[str, Any]] = []
+        try:
+            embedding = self.get_embedding(query)
+            vector_rows = self.storage.search_vectors(embedding, vaults, fetch_k)
+        except Exception as exc:
+            logger.warning("Vector retrieval failed: %s", exc)
+
+        return rrf_fuse([bm25_rows, vector_rows])
+
+    @staticmethod
+    def _dedupe_by_note(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep only the best-ranked chunk per note path."""
+        seen: set[tuple[str, str]] = set()
+        unique: list[dict[str, Any]] = []
+        for row in rows:
+            key = (row["vault"], row["path"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(row)
+        return unique
 
     def query(
         self,
@@ -559,18 +303,8 @@ class BrainQueryEngine:
         n_results: int = SEARCH_N_RESULTS_DEFAULT,
         expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
-        use_mmr: bool = False,
         vault_override: str | None = None,
     ) -> str:
-        vault_name = vault_override or self.current_vault
-
-        if self.cache:
-            cache_key = f"{vault_name}:{text}"
-            cached = self.cache.get(cache_key)
-            if cached:
-                logger.info(f"Cache hit for query: {text[:50]}...")
-                return cached["formatted_results"]
-
         processed_query = self.query_preprocessor.preprocess(text)
         if processed_query != text and logger.isEnabledFor(logging.DEBUG):
             logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
@@ -581,146 +315,31 @@ class BrainQueryEngine:
                 v for v in fallback_chain if v != vault_override
             ]
 
-        all_docs: list[str] = []
-        all_metas: list[dict[str, Any]] = []
-        seen_paths: set[str] = set()
-        searched_vaults: set[str] = set()
+        rows = self._hybrid_retrieve(processed_query, fallback_chain, n_results)
+        rows = self._dedupe_by_note(rows)
 
-        for vname in fallback_chain:
-            if len(all_docs) >= n_results:
-                break
-            if vname in searched_vaults:
-                continue
-            searched_vaults.add(vname)
+        if use_rerank and Config.ENABLE_RERANK and rows:
+            pairs = [(row["content"], row) for row in rows]
+            reranked = get_reranker().rerank(processed_query, pairs)
+            rows = [meta for _doc, meta in reranked]
 
-            collection = self._get_vault_collection(vname)
-            if collection is None:
-                logger.debug("Collection not found for vault '%s', skipping", vname)
-                continue
+        rows = rows[:n_results]
+        return self._build_context(rows, expand_graph)
 
-            remaining = n_results - len(all_docs)
-            try:
-                docs, metadatas, _ = self._search_vectors_in_collection(
-                    processed_query, collection, remaining + 5
-                )
-            except Exception as e:
-                logger.warning("Search failed for vault '%s': %s", vname, e)
-                continue
-
-            for doc, meta in zip(docs, metadatas):
-                note_path = meta.get("path") or meta.get("filename", "")
-                if note_path not in seen_paths:
-                    meta = dict(meta)
-                    meta["vault_source"] = vname
-                    seen_paths.add(note_path)
-                    all_docs.append(doc)
-                    all_metas.append(meta)
-                    if len(all_docs) >= n_results:
-                        break
-
-        docs, metadatas = all_docs[:n_results], all_metas[:n_results]
-
-        if use_mmr:
-            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
-        if use_rerank and Config.ENABLE_RERANK:
-            reranked = self.rerank_results(processed_query, list(zip(docs, metadatas)))
-            if reranked:
-                docs, metadatas = zip(*reranked)
-                docs = list(docs[:n_results])
-                metadatas = list(metadatas[:n_results])
-
-        result = self._build_context_multi_vault(docs, metadatas, expand_graph)
-
-        if self.cache:
-            cache_key = f"{vault_name}:{text}"
-            self.cache.set(cache_key, {"formatted_results": result})
-
-        return result
-
-    def _build_context_multi_vault(
-        self,
-        docs: list[str],
-        metadatas: list[dict[str, Any]],
-        expand_graph: bool,
-    ) -> str:
+    def _build_context(self, rows: list[dict[str, Any]], expand_graph: bool) -> str:
         context_briefing = []
         seen_notes = set()
 
-        for doc, meta in zip(docs, metadatas):
-            note_label = meta.get("path") or meta["filename"]
-            vault_source = meta.get("vault_source", "?")
+        for row in rows:
+            note_label = row["path"]
+            vault_source = row.get("vault", "?")
             context_briefing.append(
-                f"--- Source [{vault_source}]: {note_label} ---\n{doc}"
+                f"--- Source [{vault_source}]: {note_label} ---\n{row['content']}"
             )
             seen_notes.add(note_label)
 
             if expand_graph:
-                related = self.get_related_notes(note_label)
-                for rel_note in related:
-                    if rel_note not in seen_notes:
-                        context_briefing.append(
-                            f"--- Related Note: {rel_note} (Linked via {note_label}) ---"
-                        )
-                        seen_notes.add(rel_note)
-
-        return "\n\n".join(context_briefing)
-
-    def _search_vectors(
-        self, query: str, n_results: int
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        embedding = self.get_embedding(query)
-        results = self.vector_collection.query(
-            query_embeddings=[embedding], n_results=n_results
-        )
-        docs = results["documents"][0] if results.get("documents") else []
-        metadatas = (
-            [dict(m) for m in results["metadatas"][0]]
-            if results.get("metadatas") and results["metadatas"]
-            else []
-        )
-        return docs, metadatas
-
-    def _apply_reranking(
-        self,
-        docs: list[str],
-        metadatas: list[dict[str, Any]],
-        query: str,
-        n_results: int,
-        use_mmr: bool,
-        use_rerank: bool,
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        if not docs:
-            return docs, metadatas
-
-        if use_mmr:
-            logger.info("Applying diversity reranking...")
-            docs, metadatas = self._diversify_results(docs, metadatas, n_results)
-
-        if use_rerank and Config.ENABLE_RERANK:
-            reranked = self.rerank_results(query, list(zip(docs, metadatas)))
-            if reranked:
-                docs, metadatas = zip(*reranked)
-                docs = list(docs[:n_results])
-                metadatas = list(metadatas[:n_results])
-
-        return docs, metadatas
-
-    def _build_context(
-        self,
-        docs: list[str],
-        metadatas: list[dict[str, Any]],
-        expand_graph: bool,
-    ) -> str:
-        context_briefing = []
-        seen_notes = set()
-
-        for doc, meta in zip(docs, metadatas):
-            note_label = meta.get("path") or meta["filename"]
-            context_briefing.append(f"--- Source: {note_label} ---\n{doc}")
-            seen_notes.add(note_label)
-
-            if expand_graph:
-                related = self.get_related_notes(note_label)
+                related = self.get_related_notes(note_label, vault=vault_source)
                 for rel_note in related:
                     if rel_note not in seen_notes:
                         context_briefing.append(

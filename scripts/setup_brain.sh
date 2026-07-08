@@ -12,23 +12,7 @@ echo "🚀 Clawdiney - Setup Bootstrapper"
 echo "=================================="
 echo ""
 
-# 1. Check if Docker is installed
-echo "🔍 Checking Docker..."
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker is not installed. Please install Docker first: https://docs.docker.com/get-docker/"
-    exit 1
-fi
-echo "✅ Docker found"
-
-# 2. Check if Docker Compose is available
-echo "🔍 Checking Docker Compose..."
-if ! docker compose version &> /dev/null; then
-    echo "❌ Docker Compose is not installed. Please install it first."
-    exit 1
-fi
-echo "✅ Docker Compose found"
-
-# 3. Check if Ollama is installed
+# 1. Check if Ollama is installed
 echo "🔍 Checking Ollama..."
 if ! command -v ollama &> /dev/null; then
     echo "❌ Ollama is not installed. Please install Ollama first: https://ollama.com/"
@@ -49,19 +33,7 @@ else
     echo "✅ .env found"
 fi
 
-# 5. Start Docker containers (Neo4j + ChromaDB)
-echo ""
-echo "🐳 Starting Docker containers (Neo4j + ChromaDB)..."
-docker compose -f docker/docker-compose.yml up -d
-echo "✅ Containers started"
-
-# 6. Wait for Neo4j to be ready
-echo ""
-echo "⏳ Waiting for Neo4j to be ready..."
-sleep 10
-echo "✅ Neo4j should be ready"
-
-# 7. Create Python virtual environment
+# 5. Create Python virtual environment
 echo ""
 echo "🐍 Setting up Python virtual environment..."
 if [ ! -d "venv" ]; then
@@ -75,15 +47,15 @@ fi
 echo ""
 echo "📦 Installing Python dependencies..."
 "$SCRIPT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
-"$SCRIPT_DIR/venv/bin/pip" install -r requirements.txt
+"$SCRIPT_DIR/venv/bin/pip" install -e .
 echo "✅ Dependencies installed"
 
 # 8.5. Verify installation
 echo ""
 echo "🔍 Verifying Python dependencies..."
-if ! "$SCRIPT_DIR/venv/bin/python3" -c "import neo4j, chromadb, ollama, dotenv" 2>/dev/null; then
+if ! "$SCRIPT_DIR/venv/bin/python3" -c "import sqlite_vec, ollama, dotenv" 2>/dev/null; then
     echo "⚠️  Some dependencies are missing. Reinstalling..."
-    "$SCRIPT_DIR/venv/bin/pip" install -r requirements.txt --force-reinstall
+    "$SCRIPT_DIR/venv/bin/pip" install -e . --force-reinstall
     echo "✅ Dependencies reinstalled"
 else
     echo "✅ All dependencies verified"

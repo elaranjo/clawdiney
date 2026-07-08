@@ -67,9 +67,11 @@ class TestSyncVault:
     def test_show_status_single_vault(self, mock_config):
         mock_config.get_vault_path.return_value = "/fake/vaults/projects"
 
-        with (
-            patch("clawdiney.incremental_indexer.IncrementalIndexer"),
-            patch.object(Path, "exists", return_value=False),
+        indexer = MagicMock()
+        indexer.storage.get_document_hashes.return_value = {}
+        indexer.detect_changes.return_value = ([], [])
+        with patch(
+            "clawdiney.incremental_indexer.IncrementalIndexer", return_value=indexer
         ):
             sync_mod.show_status(vault_name="projects")
 
@@ -82,9 +84,11 @@ class TestSyncVault:
             "projects": Path("/fake/projects"),
         }
 
-        with (
-            patch("clawdiney.incremental_indexer.IncrementalIndexer"),
-            patch.object(Path, "exists", return_value=False),
+        indexer = MagicMock()
+        indexer.storage.get_document_hashes.return_value = {}
+        indexer.detect_changes.return_value = ([], [])
+        with patch(
+            "clawdiney.incremental_indexer.IncrementalIndexer", return_value=indexer
         ):
             sync_mod.show_status(vault_name="")
 
@@ -94,13 +98,7 @@ class TestSyncVault:
     def test_run_sync_specific_vault(self, mock_config):
         mock_config.get_vault_path.return_value = "/fake/vaults/projects"
 
-        with (
-            patch("clawdiney.indexer.create_chroma_client"),
-            patch("clawdiney.indexer.create_collection"),
-            patch("clawdiney.indexer.create_neo4j_driver") as mock_driver,
-            patch("clawdiney.incremental_indexer.incremental_sync") as mock_sync,
-        ):
-            mock_driver.return_value.__enter__.return_value = MagicMock()
+        with patch("clawdiney.incremental_indexer.incremental_sync") as mock_sync:
             mock_sync.return_value = {
                 "sync_type": "incremental",
                 "files_synced": 5,
@@ -115,15 +113,9 @@ class TestSyncVault:
 
     @patch("clawdiney.scripts.sync_vault.Config")
     def test_run_sync_all_vaults(self, mock_config):
-        with (
-            patch("clawdiney.indexer.create_chroma_client"),
-            patch("clawdiney.indexer.create_collection"),
-            patch("clawdiney.indexer.create_neo4j_driver") as mock_driver,
-            patch(
-                "clawdiney.incremental_indexer.incremental_sync_all_vaults"
-            ) as mock_sync_all,
-        ):
-            mock_driver.return_value.__enter__.return_value = MagicMock()
+        with patch(
+            "clawdiney.incremental_indexer.incremental_sync_all_vaults"
+        ) as mock_sync_all:
             mock_sync_all.return_value = {}
             sync_mod.run_sync(full=False, vault_name="")
 
@@ -133,13 +125,7 @@ class TestSyncVault:
     def test_run_sync_full_vault(self, mock_config):
         mock_config.get_vault_path.return_value = "/fake/vaults/projects"
 
-        with (
-            patch("clawdiney.indexer.create_chroma_client"),
-            patch("clawdiney.indexer.create_collection"),
-            patch("clawdiney.indexer.create_neo4j_driver") as mock_driver,
-            patch("clawdiney.incremental_indexer.full_sync") as mock_full,
-        ):
-            mock_driver.return_value.__enter__.return_value = MagicMock()
+        with patch("clawdiney.incremental_indexer.full_sync") as mock_full:
             mock_full.return_value = {
                 "sync_type": "full",
                 "files_synced": 100,

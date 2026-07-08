@@ -9,7 +9,6 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
@@ -175,23 +174,26 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco.
         # Cleanup
         shutil.rmtree(tmpdir)
 
-    def test_indexing_performance(self, large_vault, monkeypatch):
-        """Test indexing performance with 100 notes."""
-        # Mock ChromaDB and Neo4j to measure pure indexing performance
-        mock_collection = Mock()
-        mock_driver = Mock()
-        mock_session = Mock()
-        mock_driver.session.return_value.__enter__ = Mock(return_value=mock_session)
-        mock_driver.session.return_value.__exit__ = Mock(return_value=None)
+    def test_indexing_performance(self, large_vault, tmp_path):
+        """Test indexing performance with 100 notes (real SQLite, fake embedder)."""
+        from clawdiney.storage import BrainStorage
+
+        class FakeProvider:
+            def embed(self, text):
+                return [float(len(text) % 97), 1.0, 2.0, 3.0]
+
+            def embed_batch(self, texts):
+                return [self.embed(t) for t in texts]
+
+        storage = BrainStorage(db_path=tmp_path / "perf.db", dimension=4)
 
         start_time = time.time()
 
-        # Index the vault
         summary = index_vault(
             vault_root=large_vault,
-            collection=mock_collection,
-            neo4j_driver=mock_driver,
+            storage=storage,
             strategy="headers",
+            provider=FakeProvider(),
         )
 
         elapsed = time.time() - start_time

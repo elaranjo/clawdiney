@@ -1,18 +1,18 @@
 """
 Vault Writer module for Clawdiney.
 
-Provides thread-safe write operations with automatic re-indexing.
+Provides thread-safe write operations with automatic re-indexing into
+the embedded SQLite store.
 """
 
 import logging
 import tempfile
+import threading
 from pathlib import Path
 from typing import TypedDict
 
-import chromadb
-from neo4j import GraphDatabase
-
 from .incremental_indexer import IncrementalIndexer
+from .storage import BrainStorage
 
 logger = logging.getLogger(__name__)
 
@@ -32,31 +32,14 @@ class VaultWriter:
     def __init__(
         self,
         vault_root: Path,
-        collection: chromadb.Collection | None = None,
-        neo4j_driver: GraphDatabase | None = None,
+        storage: BrainStorage | None = None,
         vault_name: str | None = None,
     ):
         self.vault_root = vault_root
-        self.vault_name = vault_name
-        self.indexer = IncrementalIndexer(vault_root)
-        self._collection = collection
-        self._neo4j_driver = neo4j_driver
-
-    def _get_collection(self) -> chromadb.Collection:
-        """Get or create ChromaDB collection."""
-        if self._collection is None:
-            from .indexer import create_chroma_client, create_collection
-
-            self._collection = create_collection(create_chroma_client())
-        return self._collection
-
-    def _get_neo4j_driver(self) -> GraphDatabase:
-        """Get or create Neo4j driver."""
-        if self._neo4j_driver is None:
-            from .indexer import create_neo4j_driver
-
-            self._neo4j_driver = create_neo4j_driver()
-        return self._neo4j_driver
+        self.vault_name = vault_name or "default"
+        self.indexer = IncrementalIndexer(
+            vault_root, vault_name=self.vault_name, storage=storage
+        )
 
     def _validate_path(self, path: str) -> Path:
         """
@@ -138,22 +121,17 @@ class VaultWriter:
             logger.info(f"Written: {path} ({len(content)} chars)")
 
             # Re-index
-            collection = self._get_collection()
-            driver = self._get_neo4j_driver()
-
-            if self.indexer.sync_file(
-                absolute_path, collection, driver, vault_name=self.vault_name or ""
-            ):
-                chunks_indexed = len(
-                    self.indexer._get_all_vault_files().get(absolute_path, "")
-                )
+            relative_path = absolute_path.relative_to(self.vault_root).as_posix()
+            try:
+                chunks_indexed = self.indexer.sync_file(relative_path)
                 return WriteResult(
                     success=True,
                     path=path,
                     message=f"Note written and indexed: {path}",
                     chunks_indexed=chunks_indexed,
                 )
-            else:
+            except Exception as e:
+                logger.error(f"Indexing failed for {path}: {e}")
                 return WriteResult(
                     success=True,
                     path=path,
@@ -193,7 +171,7 @@ class VaultWriter:
 
     def delete_note(self, path: str) -> WriteResult:
         """
-        Delete a note from the vault.
+        Delete a note from the vault and remove it from the index.
 
         Args:
             path: Vault-relative path
@@ -212,24 +190,19 @@ class VaultWriter:
                     chunks_indexed=None,
                 )
 
-            # Remove from ChromaDB first
-            collection = self._get_collection()
             relative_path = absolute_path.relative_to(self.vault_root).as_posix()
 
-            try:
-                existing = collection.get(where={"path": relative_path}, include=[])
-                if existing["ids"]:
-                    collection.delete(ids=existing["ids"])
-                    logger.info(f"Removed {len(existing['ids'])} chunks from ChromaDB")
-            except Exception as e:
-                logger.warning(f"Could not delete from ChromaDB: {e}")
-
-            # Delete file
+            # Delete file first, then remove from index
             absolute_path.unlink()
             logger.info(f"Deleted: {path}")
 
-            # Update state
-            self.indexer.update_state(absolute_path, None)
+            try:
+                removed = self.indexer.storage.delete_note(
+                    self.vault_name, relative_path
+                )
+                logger.info(f"Removed {removed} chunks from index")
+            except Exception as e:
+                logger.warning(f"Could not remove from index: {e}")
 
             return WriteResult(
                 success=True,
@@ -250,14 +223,13 @@ class VaultWriter:
 
 
 # Global singleton for MCP server
-_writer_lock = None
+_writer_lock = threading.Lock()
 _writer_instances: dict[str, VaultWriter] = {}
 
 
 def get_writer(
     vault_root: Path | None = None,
-    collection: chromadb.Collection | None = None,
-    neo4j_driver: GraphDatabase | None = None,
+    storage: BrainStorage | None = None,
     vault_name: str | None = None,
 ) -> VaultWriter:
     """
@@ -265,17 +237,9 @@ def get_writer(
 
     Args:
         vault_root: Optional vault path (uses Config.VAULT_PATH if vault_root and vault_name are None)
-        collection: Optional ChromaDB collection (created if None)
-        neo4j_driver: Optional Neo4j driver (created if None)
+        storage: Optional BrainStorage (process singleton if None)
         vault_name: Optional vault name for multi-vault mode. Overrides vault_root.
     """
-    global _writer_lock, _writer_instances
-
-    import threading
-
-    if _writer_lock is None:
-        _writer_lock = threading.Lock()
-
     with _writer_lock:
         from .config import Config
 
@@ -295,7 +259,7 @@ def get_writer(
 
         if key not in _writer_instances:
             _writer_instances[key] = VaultWriter(
-                resolved_root, collection, neo4j_driver, vault_name=vault_name
+                resolved_root, storage=storage, vault_name=vault_name
             )
             logger.info(f"VaultWriter initialized for vault: {key}")
 
