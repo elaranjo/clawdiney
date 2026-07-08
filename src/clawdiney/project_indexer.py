@@ -8,6 +8,7 @@ Security: Path traversal is prevented by resolving all paths and validating
 they are within expected boundaries. Sensitive files are automatically excluded.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -17,7 +18,14 @@ from pathlib import Path
 
 import tomli
 
+from .config import Config
+
 logger = logging.getLogger(__name__)
+
+_DIGEST_RE = re.compile(r"^clawdiney_digest:\s*(\S+)", re.M)
+_SECTION_RE = re.compile(
+    r"^## (Purpose|Architecture)\n(.*?)(?=^## |^---|\Z)", re.M | re.S
+)
 
 # Security: Pattern to sanitize filenames for Obsidian
 SAFE_FILENAME_PATTERN = re.compile(r"[^\w\s\-\.]")
@@ -45,6 +53,8 @@ class ProjectInfo:
     entry_points: list[str] = field(default_factory=list)
     description: str = ""
     repository: str = ""
+    interfaces_exposes: list[tuple[str, str]] = field(default_factory=list)
+    interfaces_consumes: list[tuple[str, str]] = field(default_factory=list)
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -235,8 +245,20 @@ class ProjectIndexer:
         # Extract common info
         self._extract_structure(resolved_path, info)
         self._extract_entry_points(resolved_path, info)
+        self._extract_interfaces(resolved_path, info)
 
         return info
+
+    def _extract_interfaces(self, project_path: Path, info: ProjectInfo) -> None:
+        """Populate Interfaces (exposes/consumes) via the deterministic extractor."""
+        try:
+            from .entity_extractor import extract_from_manifests
+
+            result = extract_from_manifests(project_path)
+            info.interfaces_exposes = result.interfaces.exposes
+            info.interfaces_consumes = result.interfaces.consumes
+        except Exception as e:
+            logger.warning(f"Interfaces extraction failed for {info.name}: {e}")
 
     def _detect_project_type(self, project_path: Path) -> str | None:
         """Detect the project type based on configuration files."""
@@ -392,9 +414,98 @@ class ProjectIndexer:
 
         info.entry_points = entry_points
 
-    def generate_markdown(self, project: ProjectInfo) -> str:
+    def _compute_digest(self, project: ProjectInfo) -> str:
+        """Digest of deterministic inputs; gates LLM section regeneration."""
+        readme = project.path / "README.md"
+        readme_head = ""
+        if readme.is_file():
+            try:
+                readme_head = readme.read_text(encoding="utf-8", errors="replace")[
+                    :4000
+                ]
+            except OSError:
+                pass
+        payload = "\n".join(
+            [
+                readme_head,
+                ",".join(project.dependencies),
+                ",".join(project.structure),
+                project.version,
+            ]
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _load_previous_sections(
+        self, target_path: Path
+    ) -> tuple[str | None, dict[str, str]]:
+        """Digest and Purpose/Architecture sections from an existing card."""
+        if not target_path.is_file():
+            return None, {}
+        try:
+            text = target_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None, {}
+        digest_match = _DIGEST_RE.search(text)
+        sections = {
+            match.group(1): match.group(2).strip()
+            for match in _SECTION_RE.finditer(text)
+        }
+        return (digest_match.group(1) if digest_match else None), sections
+
+    def _generate_llm_sections(self, project: ProjectInfo) -> dict[str, str] | None:
+        """Purpose/Architecture via Ollama. None on any failure (graceful)."""
+        readme = project.path / "README.md"
+        readme_head = ""
+        if readme.is_file():
+            try:
+                readme_head = readme.read_text(encoding="utf-8", errors="replace")[
+                    :4000
+                ]
+            except OSError:
+                pass
+        prompt = (
+            "Summarize this software project. Return ONLY JSON: "
+            '{"purpose": "2-3 sentences on what the project does and why", '
+            '"architecture": "3-5 sentences on main modules and how they fit"}\n\n'
+            f"Project: {project.name}\n"
+            f"Language: {project.language}\n"
+            f"Dependencies: {', '.join(project.dependencies[:20])}\n"
+            f"Structure: {', '.join(project.structure)}\n"
+            f"README:\n{readme_head}"
+        )
+        try:
+            import ollama
+
+            response = ollama.Client().generate(
+                model=Config.CARD_LLM_MODEL,
+                prompt=prompt,
+                format="json",
+                options={"temperature": 0.2},
+            )
+            data = json.loads(response.get("response", ""))
+            purpose = str(data.get("purpose", "")).strip()
+            architecture = str(data.get("architecture", "")).strip()
+            if not purpose:
+                return None
+            return {"Purpose": purpose, "Architecture": architecture}
+        except Exception as e:
+            logger.warning(f"LLM sections unavailable for {project.name}: {e}")
+            return None
+
+    def generate_markdown(
+        self,
+        project: ProjectInfo,
+        llm_sections: dict[str, str] | None = None,
+        digest: str | None = None,
+    ) -> str:
         """Generate Markdown documentation for a project."""
         sections = []
+
+        # Frontmatter (digest gates LLM regeneration)
+        if digest:
+            sections.append("---")
+            sections.append(f"clawdiney_digest: {digest}")
+            sections.append("---\n")
 
         # Header
         sections.append(f"# {project.name}\n")
@@ -402,6 +513,17 @@ class ProjectIndexer:
         # Description
         if project.description:
             sections.append(f"{project.description}\n")
+
+        # Purpose / Architecture (LLM-generated or pending)
+        llm_sections = llm_sections or {}
+        sections.append("## Purpose\n")
+        sections.append(llm_sections.get("Purpose") or "_pending (Ollama unavailable)_")
+        sections.append("")
+        sections.append("## Architecture\n")
+        sections.append(
+            llm_sections.get("Architecture") or "_pending (Ollama unavailable)_"
+        )
+        sections.append("")
 
         # Stack
         if project.stack or project.language:
@@ -447,6 +569,20 @@ class ProjectIndexer:
                 sections.append(f"- `{entry}` - Entry point")
             sections.append("")
 
+        # Interfaces (deterministic: exposes/consumes with source attribution)
+        if project.interfaces_exposes or project.interfaces_consumes:
+            sections.append("## Interfaces\n")
+            if project.interfaces_exposes:
+                sections.append("**Exposes:**")
+                for desc, source in project.interfaces_exposes:
+                    sections.append(f"- {desc} _(from `{source}`)_")
+                sections.append("")
+            if project.interfaces_consumes:
+                sections.append("**Consumes:**")
+                for desc, source in project.interfaces_consumes:
+                    sections.append(f"- {desc} _(from `{source}`)_")
+                sections.append("")
+
         # Footer
         sections.append("---")
         sections.append(f"*Gerado em: {project.generated_at}*")
@@ -484,8 +620,19 @@ class ProjectIndexer:
         filename = self._safe_filename(project.name)
         target_path = target_dir / filename
 
-        # Generate content with size limit
-        content = self.generate_markdown(project)
+        # LLM sections: regenerate only when deterministic inputs changed
+        digest = self._compute_digest(project)
+        previous_digest, previous_sections = self._load_previous_sections(target_path)
+        if previous_digest == digest and previous_sections.get("Purpose"):
+            llm_sections: dict[str, str] | None = previous_sections
+        else:
+            llm_sections = self._generate_llm_sections(project)
+
+        # Store digest only when LLM sections exist (retry next run otherwise)
+        stored_digest = digest if llm_sections else None
+        content = self.generate_markdown(
+            project, llm_sections=llm_sections, digest=stored_digest
+        )
         if len(content) > MAX_CONTENT_SIZE:
             logger.warning(
                 f"Generated content too large ({len(content)} bytes), truncating"

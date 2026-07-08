@@ -22,6 +22,17 @@ def mock_engine():
     engine.current_vault = "default"
     engine.query.return_value = "Mocked search results"
     engine.get_related_notes.return_value = ["related-note-1.md"]
+    engine.storage.expand_neighborhood.return_value = [
+        {
+            "name": "related-note-1.md",
+            "path": "related-note-1.md",
+            "kind": "note",
+            "rel_type": "LINKS_TO",
+            "confidence": 1.0,
+            "evidence": None,
+            "distance": 1,
+        }
+    ]
     engine.resolve_note.return_value = [
         {"path": "some/note.md", "filename": "note.md", "score": 0}
     ]
@@ -232,3 +243,123 @@ class TestHealthCheck:
         result = health_check()
         assert "default" in result
         assert "projects" in result
+
+
+class TestProjectGraphTools:
+    @pytest.fixture()
+    def graph_engine(self, tmp_path):
+        """Engine-like mock backed by a real BrainStorage with a project graph."""
+        from clawdiney.storage import BrainStorage
+
+        storage = BrainStorage(db_path=tmp_path / "brain.db", dimension=4)
+        storage.upsert_typed_entity("default", "proj-a", "project")
+        storage.upsert_typed_entity("default", "proj-b", "project")
+        lib = storage.upsert_typed_entity("default", "shared-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj-a",
+            "deterministic",
+            [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 1.0}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj-b",
+            "deterministic",
+            [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 1.0}],
+        )
+        storage.upsert_typed_entity("default", "island", "project")
+
+        engine = MagicMock()
+        engine.current_vault = "default"
+        engine.storage = storage
+        yield engine
+        storage.close()
+
+    def test_relate_shared_library(self, graph_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        with (
+            patch.object(mcp_server, "get_engine", return_value=graph_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.how_do_projects_relate("proj-a", "proj-b")
+        assert "DEPENDS_ON" in result
+        assert "shared-lib" in result
+
+    def test_relate_no_path(self, graph_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        with (
+            patch.object(mcp_server, "get_engine", return_value=graph_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.how_do_projects_relate("proj-a", "island")
+        assert "No relationship found" in result
+
+    def test_relate_unknown_project_names_argument(self, graph_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        with (
+            patch.object(mcp_server, "get_engine", return_value=graph_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.how_do_projects_relate("proj-a", "ghost")
+        assert "project_b" in result and "ghost" in result
+
+    def test_explore_graph_typed_output(self, graph_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        with (
+            patch.object(mcp_server, "get_engine", return_value=graph_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.explore_graph("proj-a")
+        assert "shared-lib [library] via DEPENDS_ON" in result
+
+    def test_get_project_card_exact(self, mock_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        mock_engine.resolve_note.return_value = [
+            {
+                "path": "00_Inbox/Projetos/clawdiney.md",
+                "filename": "clawdiney.md",
+                "score": 0,
+            }
+        ]
+        mock_engine.get_note_by_path.return_value = {
+            "path": "00_Inbox/Projetos/clawdiney.md",
+            "filename": "clawdiney.md",
+            "content": "# clawdiney\n\n## Purpose\nBrain.",
+        }
+        with (
+            patch.object(mcp_server, "get_engine", return_value=mock_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.get_project_card("clawdiney")
+        assert "## Purpose" in result
+
+    def test_get_project_card_unknown_lists_candidates(self, mock_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        mock_engine.resolve_note.return_value = []
+        with (
+            patch.object(mcp_server, "get_engine", return_value=mock_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.get_project_card("ghost")
+        assert "No project card found" in result
+
+    def test_get_project_card_ambiguous(self, mock_engine):
+        import clawdiney.mcp_server as mcp_server
+
+        mock_engine.resolve_note.return_value = [
+            {"path": "a/demo-api.md", "filename": "demo-api.md", "score": 2},
+            {"path": "b/demo-web.md", "filename": "demo-web.md", "score": 2},
+        ]
+        with (
+            patch.object(mcp_server, "get_engine", return_value=mock_engine),
+            patch.object(mcp_server, "_ensure_auto_sync"),
+        ):
+            result = mcp_server.get_project_card("demo")
+        assert "Closest candidates" in result
+        assert "demo-api.md" in result

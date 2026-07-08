@@ -25,17 +25,30 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Graph relation types
 REL_LINKS_TO = "LINKS_TO"
 REL_HAS_TAG = "HAS_TAG"
+REL_DEPENDS_ON = "DEPENDS_ON"
+REL_SHARES_DB = "SHARES_DB"
+REL_CALLS_API_OF = "CALLS_API_OF"
+REL_USES_PATTERN = "USES_PATTERN"
+REL_IMPLEMENTS = "IMPLEMENTS"
+REL_MENTIONS = "MENTIONS"
 
 # Entity kinds
 KIND_NOTE = "note"
 KIND_TAG = "tag"
+KIND_PROJECT = "project"
+KIND_SERVICE = "service"
+KIND_LIBRARY = "library"
+KIND_DATASTORE = "datastore"
+KIND_PATTERN = "pattern"
+KIND_CONCEPT = "concept"
 
 MAX_TRAVERSAL_DEPTH = 3
+MAX_PATHS = 5
 
 
 class SchemaMismatchError(RuntimeError):
@@ -97,6 +110,15 @@ class BrainStorage:
             conn.close()
             self._local.conn = None
 
+    def get_meta(self, key: str) -> str | None:
+        """Public meta accessor (extraction hashes, etc.)."""
+        return self._get_meta(key)
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Public meta setter (runs in its own transaction)."""
+        with self.conn:
+            self._set_meta(key, value)
+
     def _get_meta(self, key: str) -> str | None:
         row = self.conn.execute(
             "SELECT value FROM meta WHERE key = ?", (key,)
@@ -136,6 +158,22 @@ class BrainStorage:
                 )
             else:
                 self._validate_meta()
+                if version < 2:
+                    self._migrate_v1_to_v2(conn)
+
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Additive migration: entity_vectors table for entity resolution."""
+        dimension = int(
+            self._get_meta("embedding_dimension") or self._resolve_dimension()
+        )
+        with conn:
+            conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS entity_vectors USING vec0("
+                f"entity_id INTEGER PRIMARY KEY, "
+                f"embedding FLOAT[{dimension}] distance_metric=cosine)"
+            )
+            conn.execute("PRAGMA user_version = 2")
+        logger.info("Migrated brain.db schema v1 -> v2 (entity_vectors)")
 
     def _validate_meta(self) -> None:
         stored_model = self._get_meta("embedding_model")
@@ -217,6 +255,11 @@ CREATE TABLE relations (
 );
 CREATE INDEX idx_relations_source ON relations(source_id);
 CREATE INDEX idx_relations_target ON relations(target_id);
+
+CREATE VIRTUAL TABLE entity_vectors USING vec0(
+    entity_id INTEGER PRIMARY KEY,
+    embedding FLOAT[{dimension}] distance_metric=cosine
+);
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -521,41 +564,297 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         ).fetchall()
         return [row["path"] or row["name"] for row in rows]
 
+    def _find_entity_id(self, vault: str, ref: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT id FROM entities WHERE vault = ? AND (name = ? OR path = ?)",
+            (vault, ref, ref),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _load_edges(self, vault: str) -> list[dict[str, Any]]:
+        """All relations between entities of a vault (undirected traversal input)."""
+        rows = self.conn.execute(
+            """
+            SELECT r.id, r.source_id, r.target_id, r.rel_type, r.confidence,
+                   r.evidence_chunk_id
+            FROM relations r
+            JOIN entities s ON s.id = r.source_id
+            WHERE s.vault = ?
+            """,
+            (vault,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _entity_rows(self, ids: set[int]) -> dict[int, dict[str, Any]]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            f"SELECT id, name, path, kind FROM entities WHERE id IN ({placeholders})",
+            list(ids),
+        ).fetchall()
+        return {row["id"]: dict(row) for row in rows}
+
+    def _evidence_path(self, chunk_id: int | None) -> str | None:
+        if chunk_id is None:
+            return None
+        row = self.conn.execute(
+            "SELECT d.path FROM chunks c JOIN documents d ON d.id = c.document_id "
+            "WHERE c.id = ?",
+            (chunk_id,),
+        ).fetchone()
+        return row["path"] if row else None
+
     def expand_neighborhood(
         self, entity_name: str, vault: str, depth: int = 1
     ) -> list[dict[str, Any]]:
         """
-        Multi-hop neighborhood expansion (undirected) via recursive CTE.
-        Returns [{name, path, kind, rel_type, distance}] at minimum distance,
-        each entity once. Depth clamped to MAX_TRAVERSAL_DEPTH.
+        Multi-hop neighborhood expansion (undirected BFS).
+        Returns [{name, path, kind, rel_type, confidence, evidence, distance}]
+        at minimum distance, each entity once. Depth clamped to
+        MAX_TRAVERSAL_DEPTH.
         """
         depth = max(1, min(depth, MAX_TRAVERSAL_DEPTH))
+        start = self._find_entity_id(vault, entity_name)
+        if start is None:
+            return []
+
+        adjacency: dict[int, list[dict[str, Any]]] = {}
+        for edge in self._load_edges(vault):
+            adjacency.setdefault(edge["source_id"], []).append(edge)
+            adjacency.setdefault(edge["target_id"], []).append(edge)
+
+        visited: dict[int, dict[str, Any]] = {}
+        frontier = [start]
+        seen = {start}
+        for distance in range(1, depth + 1):
+            next_frontier: list[int] = []
+            for node in frontier:
+                for edge in adjacency.get(node, []):
+                    other = (
+                        edge["target_id"]
+                        if edge["source_id"] == node
+                        else edge["source_id"]
+                    )
+                    if other in seen:
+                        continue
+                    seen.add(other)
+                    visited[other] = {
+                        "rel_type": edge["rel_type"],
+                        "confidence": edge["confidence"],
+                        "evidence_chunk_id": edge["evidence_chunk_id"],
+                        "distance": distance,
+                    }
+                    next_frontier.append(other)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        entities = self._entity_rows(set(visited))
+        results = []
+        for entity_id, info in visited.items():
+            entity = entities.get(entity_id)
+            if entity is None:
+                continue
+            results.append(
+                {
+                    "name": entity["name"],
+                    "path": entity["path"],
+                    "kind": entity["kind"],
+                    "rel_type": info["rel_type"],
+                    "confidence": info["confidence"],
+                    "evidence": self._evidence_path(info["evidence_chunk_id"]),
+                    "distance": info["distance"],
+                }
+            )
+        results.sort(key=lambda item: (item["distance"], item["name"]))
+        return results
+
+    def find_paths(
+        self, vault: str, ref_a: str, ref_b: str, max_depth: int = MAX_TRAVERSAL_DEPTH
+    ) -> list[list[dict[str, Any]]]:
+        """
+        Shortest paths (up to MAX_PATHS) between two entities via BFS.
+        Each path is a list of hops:
+        {source, rel_type, target, source_kind, target_kind, confidence, evidence}.
+        Returns [] when either entity is missing or no path within max_depth.
+        """
+        max_depth = max(1, min(max_depth, MAX_TRAVERSAL_DEPTH))
+        start = self._find_entity_id(vault, ref_a)
+        goal = self._find_entity_id(vault, ref_b)
+        if start is None or goal is None or start == goal:
+            return []
+
+        adjacency: dict[int, list[dict[str, Any]]] = {}
+        for edge in self._load_edges(vault):
+            adjacency.setdefault(edge["source_id"], []).append(edge)
+            adjacency.setdefault(edge["target_id"], []).append(edge)
+
+        # BFS collecting paths as (node, [edges])
+        paths_found: list[list[dict[str, Any]]] = []
+        queue: list[tuple[int, list[dict[str, Any]], set[int]]] = [(start, [], {start})]
+        while queue and len(paths_found) < MAX_PATHS:
+            node, edge_path, on_path = queue.pop(0)
+            if len(edge_path) >= max_depth:
+                continue
+            for edge in adjacency.get(node, []):
+                other = (
+                    edge["target_id"]
+                    if edge["source_id"] == node
+                    else edge["source_id"]
+                )
+                if other in on_path:
+                    continue
+                new_path = edge_path + [dict(edge, hop_from=node, hop_to=other)]
+                if other == goal:
+                    paths_found.append(new_path)
+                    if len(paths_found) >= MAX_PATHS:
+                        break
+                else:
+                    queue.append((other, new_path, on_path | {other}))
+
+        all_ids: set[int] = set()
+        for path in paths_found:
+            for hop in path:
+                all_ids.update((hop["hop_from"], hop["hop_to"]))
+        entities = self._entity_rows(all_ids)
+
+        formatted: list[list[dict[str, Any]]] = []
+        for path in sorted(paths_found, key=len):
+            hops = []
+            for hop in path:
+                # Render the edge's true direction, not the traversal direction
+                src = entities[hop["source_id"]]
+                dst = entities[hop["target_id"]]
+                hops.append(
+                    {
+                        "source": src["name"],
+                        "source_kind": src["kind"],
+                        "rel_type": hop["rel_type"],
+                        "target": dst["name"],
+                        "target_kind": dst["kind"],
+                        "confidence": hop["confidence"],
+                        "evidence": self._evidence_path(hop["evidence_chunk_id"]),
+                    }
+                )
+            formatted.append(hops)
+        return formatted
+
+    # ------------------------------------------------------------------
+    # Typed entities (project knowledge graph)
+    # ------------------------------------------------------------------
+
+    def upsert_typed_entity(
+        self,
+        vault: str,
+        name: str,
+        kind: str,
+        description: str | None = None,
+        embedding: list[float] | None = None,
+    ) -> int:
+        """Insert or update a typed entity; stores its resolution vector if given."""
+        conn = self.conn
+        with conn:
+            entity_id = self._upsert_entity(
+                conn, vault, name, kind, description=description
+            )
+            if embedding is not None:
+                conn.execute(
+                    "DELETE FROM entity_vectors WHERE entity_id = ?", (entity_id,)
+                )
+                conn.execute(
+                    "INSERT INTO entity_vectors (entity_id, embedding) VALUES (?, ?)",
+                    (entity_id, serialize_f32(embedding)),
+                )
+        return entity_id
+
+    def find_similar_entity(
+        self,
+        vault: str,
+        kind: str,
+        embedding: list[float],
+        threshold: float,
+    ) -> dict[str, Any] | None:
+        """
+        Most similar existing entity of a kind by cosine similarity of its
+        resolution vector. Returns {id, name, similarity} above threshold,
+        else None.
+        """
         rows = self.conn.execute(
             """
-            WITH RECURSIVE walk(entity_id, rel_type, distance) AS (
-                SELECT id, NULL, 0 FROM entities
-                WHERE vault = :vault AND (name = :ref OR path = :ref)
-                UNION
-                SELECT
-                    CASE WHEN r.source_id = w.entity_id THEN r.target_id
-                         ELSE r.source_id END,
-                    r.rel_type,
-                    w.distance + 1
-                FROM relations r
-                JOIN walk w ON w.entity_id IN (r.source_id, r.target_id)
-                WHERE w.distance < :depth
-            )
-            SELECT e.name, e.path, e.kind, w.rel_type,
-                   MIN(w.distance) AS distance
-            FROM walk w
-            JOIN entities e ON e.id = w.entity_id
-            WHERE w.distance > 0 AND e.vault = :vault
-            GROUP BY e.id
-            ORDER BY distance, e.name
+            SELECT e.id, e.name, v.distance
+            FROM (
+                SELECT entity_id, distance FROM entity_vectors
+                WHERE embedding MATCH ? AND k = ?
+            ) v
+            JOIN entities e ON e.id = v.entity_id
+            WHERE e.vault = ? AND e.kind = ?
+            ORDER BY v.distance
+            LIMIT 1
             """,
-            {"vault": vault, "ref": entity_name, "depth": depth},
+            (serialize_f32(embedding), 10, vault, kind),
         ).fetchall()
-        return [dict(row) for row in rows]
+        if not rows:
+            return None
+        similarity = 1.0 - rows[0]["distance"]  # cosine distance -> similarity
+        if similarity < threshold:
+            return None
+        return {"id": rows[0]["id"], "name": rows[0]["name"], "similarity": similarity}
+
+    def replace_project_relations(
+        self,
+        vault: str,
+        project_name: str,
+        layer: str,
+        relations: list[dict[str, Any]],
+    ) -> int:
+        """
+        Atomically replace one layer of a project's extracted relations.
+
+        layer: 'deterministic' (confidence == 1.0) or 'semantic' (< 1.0).
+        relations: [{target_id, rel_type, confidence, evidence_chunk_id?}].
+        Returns number of relations written.
+        """
+        if layer not in ("deterministic", "semantic"):
+            raise ValueError(f"Unknown layer: {layer}")
+        conn = self.conn
+        with conn:
+            project_id = self._upsert_entity(conn, vault, project_name, KIND_PROJECT)
+            if layer == "deterministic":
+                conn.execute(
+                    "DELETE FROM relations WHERE source_id = ? AND confidence = 1.0 "
+                    "AND rel_type NOT IN (?, ?)",
+                    (project_id, REL_LINKS_TO, REL_HAS_TAG),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM relations WHERE source_id = ? AND confidence < 1.0",
+                    (project_id,),
+                )
+            written = 0
+            for rel in relations:
+                confidence = float(rel["confidence"])
+                if layer == "deterministic" and confidence != 1.0:
+                    raise ValueError("deterministic layer requires confidence == 1.0")
+                if layer == "semantic" and not (0.0 < confidence < 1.0):
+                    raise ValueError("semantic layer requires 0 < confidence < 1")
+                conn.execute(
+                    "INSERT INTO relations "
+                    "(source_id, target_id, rel_type, confidence, evidence_chunk_id) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source_id, target_id, rel_type) DO UPDATE SET "
+                    "confidence = excluded.confidence, "
+                    "evidence_chunk_id = excluded.evidence_chunk_id",
+                    (
+                        project_id,
+                        rel["target_id"],
+                        rel["rel_type"],
+                        confidence,
+                        rel.get("evidence_chunk_id"),
+                    ),
+                )
+                written += 1
+        return written
 
     # ------------------------------------------------------------------
     # Introspection / health
@@ -581,6 +880,22 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                 "embedding_dimension": self._get_meta("embedding_dimension"),
             },
         }
+
+    def find_chunk_by_quote(self, vault: str, doc_path: str, quote: str) -> int | None:
+        """Chunk id of the given document containing quote as substring."""
+        quote = quote.strip()
+        if not quote:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT c.id FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE d.vault = ? AND d.path = ? AND instr(c.content, ?) > 0
+            LIMIT 1
+            """,
+            (vault, doc_path, quote),
+        ).fetchone()
+        return row["id"] if row else None
 
     def get_document_hashes(self, vault: str) -> dict[str, str]:
         """Map of path -> content_hash for a vault (for incremental sync)."""

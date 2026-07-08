@@ -162,6 +162,14 @@ def run_indexing(indexer: ProjectIndexer, projects_root: Path) -> int:
     logger.info("Indexing projects...")
     saved_paths = indexer.index_all(projects_root)
 
+    # Populate the project knowledge graph (failures logged, never fatal)
+    from ..entity_extractor import extract_for_project_card
+
+    for project, card_file in zip(indexer.projects, saved_paths):
+        extract_for_project_card(
+            project.name, project.path, card_file, indexer.vault_path
+        )
+
     print(f"\n✅ Indexed {len(indexer.projects)} projects")
     print("\nSaved documentation:")
     for path in saved_paths:
