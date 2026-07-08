@@ -1,276 +1,173 @@
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+"""Query engine tests against real tempfile storage (no service mocks)."""
+
+from unittest.mock import MagicMock
 
 import pytest
 
 from clawdiney.query_engine import BrainQueryEngine
+from clawdiney.storage import BrainStorage
+
+DIM = 4
 
 
-@pytest.fixture
-def mock_deps():
-    with (
-        patch(
-            "clawdiney.query_engine.Config.get_chroma_client_config",
-            return_value={"host": "localhost", "port": "8000"},
-        ),
-        patch("clawdiney.query_engine.chromadb.HttpClient"),
-        patch("clawdiney.query_engine.GraphDatabase.driver"),
-        patch("clawdiney.query_engine.QueryCache"),
-        patch(
-            "clawdiney.query_engine.Config.get_default_vault", return_value="general"
-        ),
-        patch("clawdiney.query_engine.Config.VAULT_PATH", "~/test_vault"),
-        patch("clawdiney.query_engine.Config.get_vault_path"),
-        patch("clawdiney.query_engine.load_vault_config"),
-    ):
-        yield
+class FakeProvider:
+    def embed(self, text):
+        seed = float(len(text) % 97)
+        return [seed, seed / 2, seed / 3, seed / 4]
+
+    def embed_batch(self, texts):
+        return [self.embed(t) for t in texts]
 
 
-@pytest.fixture
-def mock_collections(mock_deps):
-    collections = {}
+@pytest.fixture()
+def vault_root(tmp_path, monkeypatch):
+    root = tmp_path / "vault"
+    (root / "30_Resources" / "SOPs").mkdir(parents=True)
+    (root / "SOP_Auth.md").write_text("# Auth SOP\n\nUse JWT.", encoding="utf-8")
+    (root / "30_Resources" / "SOPs" / "SOP_Auth.md").write_text(
+        "# Nested Auth SOP\n\n## Details\n\nnested version", encoding="utf-8"
+    )
+    (root / "Unique.md").write_text("# Unique\n\nonly one", encoding="utf-8")
 
-    def get_collection(name):
-        if name in collections:
-            return collections[name]
-        if name == "vault_general":
-            coll = MagicMock()
-            coll.query.return_value = {"documents": [[]], "metadatas": [[]]}
-            collections[name] = coll
-            return coll
-        raise Exception(f"Collection {name} not found")
-
-    chroma_client = MagicMock()
-    chroma_client.get_collection.side_effect = get_collection
-
-    cache_mock = MagicMock()
-    cache_mock.get.return_value = None
-
-    with (
-        patch("clawdiney.query_engine.chromadb.HttpClient", return_value=chroma_client),
-        patch("clawdiney.query_engine.QueryCache", return_value=cache_mock),
-    ):
-        engine = BrainQueryEngine()
-        engine.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
-        yield engine, collections
+    monkeypatch.delenv("VAULTS_DIR", raising=False)
+    monkeypatch.delenv("VAULTS", raising=False)
+    monkeypatch.setattr("clawdiney.config.Config.VAULT_PATH", str(root))
+    monkeypatch.setattr("clawdiney.config.Config.ENABLE_RERANK", False)
+    return root
 
 
-class TestBrainQueryEngineInit:
-    def test_no_vault_uses_default(self, mock_deps):
-        with patch("clawdiney.query_engine.chromadb.HttpClient"):
-            engine = BrainQueryEngine()
-        assert engine.current_vault == "general"
-
-    def test_with_vault_param(self, mock_deps):
-        with patch("clawdiney.query_engine.chromadb.HttpClient"):
-            engine = BrainQueryEngine(vault="design")
-        assert engine.current_vault == "design"
-
-    def test_legacy_fallback_collection(self, mock_deps):
-        chroma_client = MagicMock()
-        chroma_client.get_collection.side_effect = [Exception("not found"), MagicMock()]
-        with patch(
-            "clawdiney.query_engine.chromadb.HttpClient", return_value=chroma_client
-        ):
-            engine = BrainQueryEngine(vault="nonexistent")
-        assert engine.vector_collection is not None
+@pytest.fixture()
+def engine(vault_root, tmp_path):
+    storage = BrainStorage(db_path=tmp_path / "brain.db", dimension=DIM)
+    eng = BrainQueryEngine(vault="default", storage=storage, provider=FakeProvider())
+    yield eng
+    storage.close()
 
 
-class TestGetFallbackChain:
-    def test_basic_chain(self, mock_collections):
-        engine, _ = mock_collections
+class TestInit:
+    def test_no_vault_uses_default(self, engine):
+        assert engine.current_vault == "default"
+
+    def test_context_manager(self, vault_root, tmp_path):
+        storage = BrainStorage(db_path=tmp_path / "cm.db", dimension=DIM)
+        with BrainQueryEngine(
+            vault="default", storage=storage, provider=FakeProvider()
+        ) as eng:
+            assert eng.current_vault == "default"
+
+
+class TestFallbackChain:
+    def test_basic_chain_appends_general(self, engine):
         engine.vault_config = None
-        chain = engine._get_fallback_chain()
-        assert chain == ["general"]
+        assert engine._get_fallback_chain() == ["default", "general"]
 
-    def test_with_linked_vaults(self, mock_collections):
-        engine, _ = mock_collections
+    def test_with_linked_vaults(self, engine):
         engine.current_vault = "design"
         engine.vault_config = MagicMock()
         engine.vault_config.linked_vaults = ["backend", "frontend"]
-        chain = engine._get_fallback_chain()
-        assert chain == ["design", "backend", "frontend", "general"]
+        assert engine._get_fallback_chain() == [
+            "design",
+            "backend",
+            "frontend",
+            "general",
+        ]
 
-    def test_general_not_duplicated(self, mock_collections):
-        engine, _ = mock_collections
+    def test_general_not_duplicated(self, engine):
         engine.current_vault = "general"
         engine.vault_config = MagicMock()
         engine.vault_config.linked_vaults = []
-        chain = engine._get_fallback_chain()
-        assert chain == ["general"]
+        assert engine._get_fallback_chain() == ["general"]
 
 
-class TestGetVaultCollection:
-    def test_caches_collections(self, mock_collections):
-        engine, collections = mock_collections
-        mock_coll = MagicMock()
-        collections["vault_design"] = mock_coll
-        coll = engine._get_vault_collection("design")
-        assert coll is mock_coll
-        assert "_collection_cache" in dir(engine)
-        assert engine._collection_cache["design"] is mock_coll
-        coll2 = engine._get_vault_collection("design")
-        assert coll2 is coll
+class TestResolveNote:
+    def test_exact_filename_ranks_first(self, engine):
+        result = engine.resolve_note("SOP_Auth.md")
+        assert len(result) == 2
+        assert result[0]["score"] == 0
 
-    def test_none_for_missing(self, mock_collections):
-        engine, _ = mock_collections
-        result = engine._get_vault_collection("nonexistent")
-        assert result is None
+    def test_partial_match(self, engine):
+        result = engine.resolve_note("unique")
+        assert len(result) == 1
+        assert result[0]["path"] == "Unique.md"
+
+    def test_empty_query(self, engine):
+        assert engine.resolve_note("  ") == []
 
 
-class TestResolveNoteVaultAware:
-    def test_resolve_note_with_vault_param(self, mock_collections):
-        engine, _ = mock_collections
-        with (
-            patch(
-                "clawdiney.query_engine.Config.get_vault_path",
-                return_value="/fake/projects_vault",
-            ),
-            patch("pathlib.Path.rglob") as mock_rglob,
-        ):
-            fake_path = MagicMock(spec=Path)
-            fake_path.relative_to.return_value = Path("my_note.md")
-            fake_path.name = "my_note.md"
-            fake_path.__str__.return_value = "/fake/projects_vault/my_note.md"
-            mock_rglob.return_value = [fake_path]
+class TestGetNoteByPath:
+    def test_reads_canonical_path(self, engine):
+        note = engine.get_note_by_path("Unique.md")
+        assert note["filename"] == "Unique.md"
+        assert "only one" in note["content"]
 
-            result = engine.resolve_note("my_note", vault="projects")
-            assert len(result) == 1
-            assert result[0]["path"] == "my_note.md"
+    def test_rejects_outside_vault(self, engine):
+        with pytest.raises(ValueError, match="outside the vault"):
+            engine.get_note_by_path("../../etc/passwd")
 
-    def test_resolve_note_no_vault_uses_current(self, mock_collections):
-        engine, _ = mock_collections
-        with patch("pathlib.Path.rglob") as mock_rglob:
-            fake_path = MagicMock(spec=Path)
-            fake_path.relative_to.return_value = Path("general_note.md")
-            fake_path.name = "general_note.md"
-            mock_rglob.return_value = [fake_path]
-
-            result = engine.resolve_note("general_note")
-            assert len(result) == 1
+    def test_missing_note_raises(self, engine):
+        with pytest.raises(FileNotFoundError):
+            engine.get_note_by_path("nope.md")
 
 
-class TestGetRelatedNotesVaultAware:
-    def test_get_related_notes_with_vault_filter(self, mock_collections):
-        engine, _ = mock_collections
-        mock_session = MagicMock()
-        mock_record = MagicMock()
-        mock_record.__getitem__.side_effect = lambda k: (
-            "related_note.md" if k == "path" else ""
+class TestGetNoteChunks:
+    def test_ambiguous_requires_disambiguation(self, engine):
+        with pytest.raises(ValueError, match="Multiple notes match"):
+            engine.get_note_chunks("SOP_Auth.md")
+
+    def test_canonical_path_returns_chunks(self, engine):
+        chunks = engine.get_note_chunks("30_Resources/SOPs/SOP_Auth.md")
+        assert chunks
+        assert all("header" in c and "chunk_index" in c for c in chunks)
+
+    def test_unknown_raises(self, engine):
+        with pytest.raises(FileNotFoundError):
+            engine.get_note_chunks("does_not_exist.md")
+
+
+class TestGetRelatedNotes:
+    def test_uses_storage_scoped_by_current_vault(self, engine):
+        engine.storage.upsert_note(
+            vault="default",
+            path="A.md",
+            content_hash="h",
+            updated_at="now",
+            chunks=[{"header": "", "content": "a"}],
+            embeddings=[[1.0, 2.0, 3.0, 4.0]],
+            wikilinks=["Unique.md"],
+            tags=[],
         )
-        mock_session.run.return_value = [mock_record]
-        engine.neo4j_driver.session.return_value.__enter__.return_value = mock_session
+        assert engine.get_related_notes("A.md") == ["Unique.md"]
 
-        result = engine.get_related_notes("some_note")
+    def test_vault_param_overrides(self, engine):
+        assert engine.get_related_notes("A.md", vault="empty_vault") == []
 
-        call_kwargs = mock_session.run.call_args[1]
-        assert "vault" in call_kwargs
-        assert call_kwargs["vault"] == "general"
-        assert "related_note.md" in result
 
-    def test_get_related_notes_vault_param(self, mock_collections):
-        engine, _ = mock_collections
-        mock_session = MagicMock()
-        mock_record = MagicMock()
-        mock_record.__getitem__.side_effect = lambda k: (
-            "related.md" if k == "path" else ""
+class TestQueryMultiVault:
+    def test_vault_override_prepends_chain(self, engine):
+        engine.storage.upsert_note(
+            vault="frontend",
+            path="fe.md",
+            content_hash="h",
+            updated_at="now",
+            chunks=[{"header": "", "content": "frontend widget catalog"}],
+            embeddings=[[5.0, 2.5, 1.6, 1.25]],
+            wikilinks=[],
+            tags=[],
         )
-        mock_session.run.return_value = [mock_record]
-        engine.neo4j_driver.session.return_value.__enter__.return_value = mock_session
+        result = engine.query("widget", vault_override="frontend", expand_graph=False)
+        assert "fe.md" in result
+        assert "Source [frontend]" in result
 
-        result = engine.get_related_notes("some_note", vault="design")
-
-        call_kwargs = mock_session.run.call_args[1]
-        assert call_kwargs["vault"] == "design"
-        assert "related.md" in result
-
-
-class TestGetNoteByPathVaultAware:
-    def test_get_note_by_path_with_vault(self, mock_collections):
-        engine, _ = mock_collections
-        with (
-            patch(
-                "clawdiney.query_engine.Config.get_vault_path",
-                return_value="/fake/projects_vault",
-            ),
-            patch("pathlib.Path.is_file", return_value=True),
-            patch("pathlib.Path.read_text", return_value="# Note content"),
-        ):
-            result = engine.get_note_by_path("note.md", vault="projects")
-            assert result["filename"] == "note.md"
-            assert result["content"] == "# Note content"
-
-    def test_get_note_by_path_no_vault(self, mock_collections):
-        engine, _ = mock_collections
-        engine.vault_root = Path("/fake/general_vault")
-        with (
-            patch("pathlib.Path.is_file", return_value=True),
-            patch("pathlib.Path.read_text", return_value="# General"),
-        ):
-            result = engine.get_note_by_path("note.md")
-            assert result["content"] == "# General"
-
-
-class TestQueryWithVault:
-    def test_cache_key_includes_vault(self, mock_collections):
-        engine, collections = mock_collections
-        engine.cache.get = MagicMock(return_value=None)
-        engine.cache.set = MagicMock()
-        engine.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
-        collections["vault_general"].query.return_value = {
-            "documents": [["doc1"]],
-            "metadatas": [[{"path": "note1.md", "filename": "note1.md"}]],
-        }
-        engine.query("test query")
-        cache_set_call = engine.cache.set.call_args
-        assert cache_set_call is not None
-        cache_key = cache_set_call[0][0]
-        assert cache_key.startswith("general:")
-
-    def test_fallback_chain_fills_results(self, mock_collections):
-        engine, collections = mock_collections
-        engine.current_vault = "design"
-        engine.vault_config = MagicMock()
-        engine.vault_config.linked_vaults = ["backend"]
-        engine.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
-
-        collections["vault_design"] = MagicMock()
-        collections["vault_design"].query.return_value = {
-            "documents": [["design_doc1"]],
-            "metadatas": [[{"path": "design/note1.md", "filename": "note1.md"}]],
-        }
-        collections["vault_backend"] = MagicMock()
-        collections["vault_backend"].query.return_value = {
-            "documents": [["backend_doc1"]],
-            "metadatas": [[{"path": "backend/note1.md", "filename": "note1.md"}]],
-        }
-        collections["vault_general"] = MagicMock()
-        collections["vault_general"].query.return_value = {
-            "documents": [["general_doc1"]],
-            "metadatas": [[{"path": "general/note1.md", "filename": "note1.md"}]],
-        }
-
-        result = engine.query("test", n_results=3)
-        assert "Source [design]" in result or "design/note1" in result
-        assert "Source [backend]" in result or "backend/note1" in result
-        assert "Source [general]" in result or "general/note1" in result
-
-    def test_vault_override(self, mock_collections):
-        engine, collections = mock_collections
-        engine.current_vault = "design"
-        engine.vault_config = MagicMock()
-        engine.vault_config.linked_vaults = []
-        engine.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
-
-        collections["vault_frontend"] = MagicMock()
-        collections["vault_frontend"].query.return_value = {
-            "documents": [["frontend_doc1"]],
-            "metadatas": [[{"path": "frontend/note1.md", "filename": "note1.md"}]],
-        }
-        collections["vault_general"].query.return_value = {
-            "documents": [["general_doc1"]],
-            "metadatas": [[{"path": "general/note1.md", "filename": "note1.md"}]],
-        }
-
-        result = engine.query("test", vault_override="frontend")
-        assert "frontend" in result
+    def test_results_tagged_with_vault_source(self, engine):
+        engine.storage.upsert_note(
+            vault="general",
+            path="g.md",
+            content_hash="h",
+            updated_at="now",
+            chunks=[{"header": "", "content": "general fallback zephyr"}],
+            embeddings=[[9.0, 4.5, 3.0, 2.25]],
+            wikilinks=[],
+            tags=[],
+        )
+        result = engine.query("zephyr", expand_graph=False)
+        assert "Source [general]: g.md" in result

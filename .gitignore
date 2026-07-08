@@ -43,3 +43,10 @@ src/clawdiney.egg-info/
 
 # Antigravity CLI
 .antigravitycli/
+
+# Local AI agent tool configs
+.agent/
+.claude/
+.gemini/
+.omc/
+.opencode/

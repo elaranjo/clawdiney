@@ -68,6 +68,19 @@ def _ensure_auto_sync():
             _auto_sync_started = True
             sync_thread = threading.Thread(target=_perform_auto_sync, daemon=True)
             sync_thread.start()
+            if Config.ENABLE_RERANK:
+                warm_thread = threading.Thread(target=_warm_up_reranker, daemon=True)
+                warm_thread.start()
+
+
+def _warm_up_reranker() -> None:
+    """Load the cross-encoder in the background so first query pays no latency."""
+    try:
+        from .reranker import get_reranker
+
+        get_reranker().warm_up()
+    except Exception as e:
+        logger.warning(f"Reranker warm-up failed: {e}")
 
 
 def _detect_vault_from_cwd() -> str | None:
@@ -229,37 +242,28 @@ def get_note_chunks(filename: str, vault: str = None) -> str:
 @mcp.tool()
 def health_check() -> str:
     """
-    Check health status of all backend services (ChromaDB, Neo4j, Ollama).
-    Also shows status per configured vault.
-    Use this to diagnose connection issues.
+    Check health status of the embedded store (brain.db), Ollama, and the
+    optional cross-encoder reranker. Also shows status per configured vault.
+    Use this to diagnose issues.
     """
     results = []
     all_healthy = True
 
-    # Check ChromaDB
+    # Check brain.db
+    doc_counts: dict[str, int] = {}
     try:
-        from .indexer import create_chroma_client, create_collection
+        from .storage import get_storage
 
-        client = create_chroma_client()
-        collection = create_collection(client)
-        count = collection.count()
-        results.append(f"ChromaDB: OK ({count} vectors)")
+        stats = get_storage().stats()
+        counts = stats["counts"]
+        doc_counts = stats["documents_per_vault"]
+        results.append(
+            f"brain.db: OK ({stats['db_path']}: {counts['documents']} documents, "
+            f"{counts['chunks']} chunks, {counts['entities']} entities, "
+            f"{counts['relations']} relations)"
+        )
     except Exception as e:
-        results.append(f"ChromaDB: FAILED - {e}")
-        all_healthy = False
-
-    # Check Neo4j
-    try:
-        from .indexer import create_neo4j_driver
-
-        driver = create_neo4j_driver()
-        with driver.session() as session:
-            result = session.run("MATCH (n) RETURN count(n) as count")
-            count = result.single()["count"]
-        driver.close()
-        results.append(f"Neo4j: OK ({count} nodes)")
-    except Exception as e:
-        results.append(f"Neo4j: FAILED - {e}")
+        results.append(f"brain.db: FAILED - {e}")
         all_healthy = False
 
     # Check Ollama
@@ -274,12 +278,30 @@ def health_check() -> str:
         results.append(f"Ollama: FAILED - {e}")
         all_healthy = False
 
+    # Check reranker (optional extra; absence is not unhealthy)
+    try:
+        from .reranker import get_reranker
+
+        if not Config.ENABLE_RERANK:
+            results.append("Reranker: disabled (ENABLE_RERANK=false)")
+        elif get_reranker().available:
+            results.append("Reranker: OK (cross-encoder loaded)")
+        else:
+            results.append(
+                "Reranker: not loaded (install extra: pip install clawdiney[rerank])"
+            )
+    except Exception as e:
+        results.append(f"Reranker: FAILED - {e}")
+
     # Per-vault status
     vaults = Config.get_all_vaults()
     results.append(f"\nConfigured Vaults ({len(vaults)}):")
     for vid, vpath in vaults.items():
         engine_status = "cached" if vid in _engine_instances else "not loaded"
-        results.append(f"  - {vid}: {vpath.resolve()} [{engine_status}]")
+        docs = doc_counts.get(vid, 0)
+        results.append(
+            f"  - {vid}: {vpath.resolve()} [{engine_status}, {docs} documents indexed]"
+        )
 
     status = "All services healthy" if all_healthy else "Some services unhealthy"
     return f"{status}\n\n" + "\n".join(results)

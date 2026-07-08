@@ -69,26 +69,19 @@ class VaultEventHandler(FileSystemEventHandler):
         for file_path in files_to_sync:
             if file_path.suffix == ".md" and file_path.exists():
                 try:
-                    from brain_indexer import (
-                        create_chroma_client,
-                        create_collection,
-                        create_neo4j_driver,
-                    )
-
-                    collection = create_collection(create_chroma_client())
-                    driver = create_neo4j_driver()
-                    self.indexer.sync_file(file_path, collection, driver)
-                    driver.close()
+                    relative = file_path.relative_to(self.indexer.vault_root).as_posix()
+                    self.indexer.sync_file(relative)
                 except Exception as e:
                     logger.error(f"Failed to sync {file_path}: {e}")
 
         if deletes_to_process:
             logger.info(f"Processing {len(deletes_to_process)} deleted files...")
             try:
-                from brain_indexer import create_chroma_client, create_collection
-
-                collection = create_collection(create_chroma_client())
-                self.indexer.remove_deleted_from_chroma(deletes_to_process, collection)
+                relative_paths = [
+                    p.relative_to(self.indexer.vault_root).as_posix()
+                    for p in deletes_to_process
+                ]
+                self.indexer.remove_deleted(relative_paths)
             except Exception as e:
                 logger.error(f"Failed to process deletes: {e}")
 
@@ -160,28 +153,14 @@ class VaultWatcher:
         logger.info("Running initial sync...")
 
         try:
-            from brain_indexer import (
-                create_chroma_client,
-                create_collection,
-                create_neo4j_driver,
-            )
+            from ..incremental_indexer import incremental_sync
 
-            collection = create_collection(create_chroma_client())
-            driver = create_neo4j_driver()
-
-            from incremental_indexer import incremental_sync
-
-            result = incremental_sync(
-                vault_root=self.vault_root,
-                collection=collection,
-                neo4j_driver=driver,
-            )
+            result = incremental_sync(vault_root=self.vault_root)
 
             logger.info(
                 f"Initial sync complete: {result['files_synced']} files synced, "
                 f"{result['files_deleted']} deleted, {result['indexed_chunks']} chunks"
             )
-            driver.close()
         except Exception as e:
             logger.error(f"Initial sync failed: {e}")
 

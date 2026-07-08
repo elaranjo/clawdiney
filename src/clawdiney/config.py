@@ -1,14 +1,12 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
 from .constants import (
     CHUNK_OVERLAP_DEFAULT,
     CHUNK_SIZE_DEFAULT,
-    RERANK_THRESHOLD_DEFAULT,
 )
 from .vault_config import VaultConfig, load_vault_config, validate_linked_vaults
 
@@ -55,8 +53,9 @@ class Config:
     VAULT_PATH = os.path.expanduser(
         os.getenv("VAULT_PATH", "~/Documents/ObsidianVault")
     )
-    CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-    CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+    BRAIN_DB_PATH = os.path.expanduser(
+        os.getenv("BRAIN_DB_PATH", "~/.clawdiney/brain.db")
+    )
 
     @classmethod
     def _is_multi_vault(cls) -> bool:
@@ -157,10 +156,10 @@ class Config:
         first = os.getenv("VAULTS", "").split(",")[0].strip()
         return first or "default"
 
-    # Model
+    # Model / embeddings
     MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
-    RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "")
-    RERANK_THRESHOLD = os.getenv("RERANK_THRESHOLD", str(RERANK_THRESHOLD_DEFAULT))
+    EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
+    EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
 
     @classmethod
@@ -185,15 +184,6 @@ class Config:
                     f"Run: ollama pull {cls.MODEL_NAME}"
                 )
 
-            # Check rerank model (only if configured)
-            if cls.ENABLE_RERANK and cls.RERANK_MODEL_NAME:
-                if cls.RERANK_MODEL_NAME not in model_names:
-                    warnings.append(
-                        f"Rerank model '{cls.RERANK_MODEL_NAME}' not found in Ollama. "
-                        f"Run: ollama pull {cls.RERANK_MODEL_NAME} "
-                        f"or set ENABLE_RERANK=false to disable reranking"
-                    )
-
         except Exception as e:
             warnings.append(f"Could not connect to Ollama: {e}")
 
@@ -203,48 +193,3 @@ class Config:
     CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "headers")
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", str(CHUNK_SIZE_DEFAULT)))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", str(CHUNK_OVERLAP_DEFAULT)))
-
-    # Neo4j
-    NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-    NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-
-    # Redis (Query Cache)
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
-    ENABLE_QUERY_CACHE = _get_bool("ENABLE_QUERY_CACHE", True)
-
-    @staticmethod
-    def _validate_password_strength(password: str) -> None:
-        """Validate Neo4j password strength with complexity requirements."""
-        import re
-
-        if len(password) < 12:
-            raise ValueError("Neo4j password must be at least 12 characters long.")
-        if not re.search(r"[A-Z]", password):
-            raise ValueError(
-                "Neo4j password must contain at least one uppercase letter."
-            )
-        if not re.search(r"[a-z]", password):
-            raise ValueError(
-                "Neo4j password must contain at least one lowercase letter."
-            )
-        if not re.search(r"\d", password):
-            raise ValueError("Neo4j password must contain at least one digit.")
-
-    @classmethod
-    def get_neo4j_password(cls) -> str | None:
-        """Get Neo4j password, allowing missing value during tests."""
-        password = os.getenv("NEO4J_PASSWORD")
-        if password is None and "PYTEST_CURRENT_TEST" not in os.environ:
-            raise ValueError(
-                "Neo4j password is required. Set NEO4J_PASSWORD in .env or environment."
-            )
-        if password and "PYTEST_CURRENT_TEST" not in os.environ:
-            cls._validate_password_strength(password)
-        return password
-
-    @classmethod
-    def get_chroma_client_config(cls) -> dict[str, Any]:
-        """Returns configuration for ChromaDB HTTP client"""
-        return {"host": cls.CHROMA_HOST, "port": cls.CHROMA_PORT}

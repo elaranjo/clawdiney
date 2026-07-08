@@ -7,6 +7,20 @@ implementations for Ollama, OpenAI, and other embedding services.
 
 from typing import Protocol, runtime_checkable
 
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+_RETRY = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError, RuntimeError)),
+    reraise=True,
+)
+
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
@@ -57,14 +71,19 @@ class OllamaEmbeddingProvider:
         self.model_name = model_name
         self.ollama_client = ollama.Client(timeout=timeout)
 
+    @_RETRY
     def embed(self, text: str) -> list[float]:
-        """Generate embedding for a single text."""
-        response = self.ollama_client.embeddings(model=self.model_name, prompt=text)
-        return response["embedding"]
+        """Generate embedding for a single text via ollama.embed."""
+        response = self.ollama_client.embed(model=self.model_name, input=text)
+        return list(response["embeddings"][0])
 
+    @_RETRY
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts sequentially."""
-        return [self.embed(text) for text in texts]
+        """Generate embeddings for multiple texts in one native batch call."""
+        if not texts:
+            return []
+        response = self.ollama_client.embed(model=self.model_name, input=texts)
+        return [list(vector) for vector in response["embeddings"]]
 
 
 class OpenAIEmbeddingProvider:
@@ -122,3 +141,12 @@ def get_embedding_provider(provider: str, **kwargs) -> EmbeddingProvider:
         raise ValueError(f"Unknown provider: {provider}. Available: {available}")
 
     return providers[provider](**kwargs)
+
+
+def default_provider() -> EmbeddingProvider:
+    """Provider selected by Config.EMBEDDING_PROVIDER (default: ollama)."""
+    from .config import Config
+
+    if Config.EMBEDDING_PROVIDER == "ollama":
+        return get_embedding_provider("ollama", model_name=Config.MODEL_NAME)
+    return get_embedding_provider(Config.EMBEDDING_PROVIDER)

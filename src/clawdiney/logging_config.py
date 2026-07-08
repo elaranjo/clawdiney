@@ -34,8 +34,6 @@ def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     )
 
     # Suppress verbose logs from third-party libraries
-    logging.getLogger("chromadb").setLevel(logging.WARNING)
-    logging.getLogger("neo4j").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     """
     Configure logging for the application.
@@ -62,6 +60,4 @@ def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     )
 
     # Suppress verbose logs from third-party libraries
-    logging.getLogger("chromadb").setLevel(logging.WARNING)
-    logging.getLogger("neo4j").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
