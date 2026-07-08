@@ -242,3 +242,127 @@ class TestDanglingLinkResolution:
         _index_note(storage, "Later.md", "arrives later")
         related = storage.get_related_notes("A.md", "default")
         assert related == ["Later.md"]
+
+
+class TestSchemaV2Migration:
+    def test_v1_db_migrates_in_place(self, tmp_path):
+        db = tmp_path / "brain.db"
+        store = BrainStorage(db_path=db, dimension=DIM)
+        _index_note(store, "keep.md", "existing data survives")
+        # Simulate a v1 database: drop entity_vectors, set user_version=1
+        store.conn.execute("DROP TABLE entity_vectors")
+        store.conn.execute("PRAGMA user_version = 1")
+        store.close()
+
+        migrated = BrainStorage(db_path=db, dimension=DIM)
+        tables = {
+            row["name"]
+            for row in migrated.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "entity_vectors" in tables
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert "keep.md" in migrated.get_document_hashes("default")
+        migrated.close()
+
+
+class TestTypedEntities:
+    def test_upsert_typed_entity_with_vector(self, storage):
+        eid = storage.upsert_typed_entity(
+            "default", "sqlite-vec", "library", "vector search", embedding=_vec(3.0)
+        )
+        row = storage.conn.execute(
+            "SELECT kind, description FROM entities WHERE id = ?", (eid,)
+        ).fetchone()
+        assert row["kind"] == "library"
+        assert row["description"] == "vector search"
+        n = storage.conn.execute("SELECT COUNT(*) FROM entity_vectors").fetchone()[0]
+        assert n == 1
+
+    def test_find_similar_entity_above_threshold(self, storage):
+        storage.upsert_typed_entity(
+            "default", "JWT Authentication", "pattern", "jwt", embedding=_vec(2.0)
+        )
+        hit = storage.find_similar_entity("default", "pattern", _vec(2.0), 0.9)
+        assert hit and hit["name"] == "JWT Authentication"
+
+    def test_find_similar_entity_kind_filtered(self, storage):
+        storage.upsert_typed_entity(
+            "default", "redis", "datastore", "cache", embedding=_vec(2.0)
+        )
+        assert storage.find_similar_entity("default", "pattern", _vec(2.0), 0.5) is None
+
+    def test_replace_project_relations_layer_scoped(self, storage):
+        lib = storage.upsert_typed_entity("default", "httpx", "library")
+        pat = storage.upsert_typed_entity("default", "repository", "pattern")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "deterministic",
+            [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 1.0}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.8}],
+        )
+        # Re-run deterministic with empty list: semantic must survive
+        storage.replace_project_relations("default", "proj", "deterministic", [])
+        rels = storage.conn.execute("SELECT rel_type FROM relations").fetchall()
+        assert [r["rel_type"] for r in rels] == ["USES_PATTERN"]
+
+    def test_layer_confidence_validation(self, storage):
+        lib = storage.upsert_typed_entity("default", "x", "library")
+        with pytest.raises(ValueError, match="confidence == 1.0"):
+            storage.replace_project_relations(
+                "default",
+                "p",
+                "deterministic",
+                [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 0.5}],
+            )
+
+
+class TestPathsAndTypedExpansion:
+    def _build_projects(self, storage):
+        a = storage.upsert_typed_entity("default", "proj-a", "project")
+        b = storage.upsert_typed_entity("default", "proj-b", "project")
+        lib = storage.upsert_typed_entity("default", "shared-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj-a",
+            "deterministic",
+            [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 1.0}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj-b",
+            "deterministic",
+            [{"target_id": lib, "rel_type": "DEPENDS_ON", "confidence": 1.0}],
+        )
+        return a, b, lib
+
+    def test_path_through_shared_library(self, storage):
+        self._build_projects(storage)
+        paths = storage.find_paths("default", "proj-a", "proj-b")
+        assert paths
+        hops = paths[0]
+        assert len(hops) == 2
+        assert {h["rel_type"] for h in hops} == {"DEPENDS_ON"}
+        assert hops[0]["target"] == "shared-lib" or hops[0]["source"] == "shared-lib"
+
+    def test_no_path_returns_empty(self, storage):
+        storage.upsert_typed_entity("default", "island-a", "project")
+        storage.upsert_typed_entity("default", "island-b", "project")
+        assert storage.find_paths("default", "island-a", "island-b") == []
+
+    def test_unknown_entity_returns_empty(self, storage):
+        assert storage.find_paths("default", "ghost", "ghost2") == []
+
+    def test_mixed_kind_expansion_includes_kind_and_confidence(self, storage):
+        self._build_projects(storage)
+        result = storage.expand_neighborhood("proj-a", "default", depth=1)
+        assert result[0]["kind"] == "library"
+        assert result[0]["confidence"] == 1.0
+        assert result[0]["rel_type"] == "DEPENDS_ON"

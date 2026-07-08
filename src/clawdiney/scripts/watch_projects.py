@@ -242,8 +242,17 @@ class WatcherService:
                     projects = indexer.scan_directory(project_path.parent)
                     matching = [p for p in projects if p.name == project_name]
                     if matching:
-                        indexer.save_to_obsidian(matching[0])
+                        card_file = indexer.save_to_obsidian(matching[0])
                         logger.info(f"✅ Updated: {project_name}")
+
+                        from ..entity_extractor import extract_for_project_card
+
+                        extract_for_project_card(
+                            project_name,
+                            matching[0].path,
+                            card_file,
+                            Path(self.vault_path),
+                        )
 
             logger.info(f"✨ Reindex complete for {len(project_names)} project(s)")
 

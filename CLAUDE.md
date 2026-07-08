@@ -209,9 +209,11 @@ Use the MCP `health_check` tool (or open `brain.db` with any SQLite client) for 
 The system integrates with MCP clients. When properly configured, the agent should use these tools:
 
 1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
-2. `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
+2. `explore_graph(note_name)` - Find related entities (notes, projects, libraries, patterns) with typed relations and evidence
 3. `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 4. `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
+5. `get_project_card(name)` - Full project card (Purpose, Stack, Architecture, Interfaces) — first call when touching an unfamiliar project
+6. `how_do_projects_relate(a, b)` - Graph paths between two projects (shared libraries, datastores, patterns) with evidence
 
 The intended workflow is:
 - use `search_brain` first
@@ -258,10 +260,18 @@ Configuration example in `~/.claude.json`:
 - Prevents symlink traversal attacks
 - FTS5 query sanitization (hostile agent input cannot break MATCH syntax)
 
-### Project Indexer (NEW - feature/project-indexer)
+### Project Indexer
 - Analyzes Python and Node.js projects
 - Generates standardized Markdown docs for Obsidian
 - Selective file indexing with include/exclude patterns
 - Security: path traversal prevention, filename sanitization
-- 12 unit tests with 100% pass rate
 - See `SECURITY_REVIEW.md` for audit details
+
+### Project Knowledge Graph (v0.2.x)
+- **Enriched project cards**: Purpose/Architecture (LLM via Ollama, `CARD_LLM_MODEL`, digest-gated regeneration) + Interfaces (exposes/consumes, parsed deterministically with source attribution)
+- **Entity extraction** (`entity_extractor.py`), two layers:
+  - Layer 1 (deterministic, confidence 1.0): manifests → `library`/`service`/`datastore` entities, `DEPENDS_ON`/`SHARES_DB`/`CALLS_API_OF` relations
+  - Layer 2 (LLM, confidence < 1.0): project cards → `USES_PATTERN`/`IMPLEMENTS`/`MENTIONS` relations with evidence chunks; gated by card content hash
+- **Entity resolution**: embedding similarity over `entity_vectors` (threshold `ENTITY_RESOLUTION_THRESHOLD`, default 0.85) prevents duplicates
+- Layers never clobber each other (re-extraction replaces only its own layer)
+- Runs automatically after `index_projects` / project watcher reindex

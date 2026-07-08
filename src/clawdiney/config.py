@@ -162,6 +162,12 @@ class Config:
     EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
 
+    # Project knowledge graph
+    CARD_LLM_MODEL = os.getenv("CARD_LLM_MODEL", "qwen3")
+    ENTITY_RESOLUTION_THRESHOLD = float(
+        os.getenv("ENTITY_RESOLUTION_THRESHOLD", "0.85")
+    )
+
     @classmethod
     def validate_ollama_models(cls) -> list[str]:
         """

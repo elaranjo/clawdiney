@@ -221,3 +221,59 @@ test-cmd = "test_project:main"
         assert info.description == ""
         assert info.repository == ""
         assert info.generated_at is not None
+
+
+class TestCardEnrichment:
+    def _make_project(self, tmp_path):
+        from clawdiney.project_indexer import ProjectIndexer
+
+        proj = tmp_path / "projects" / "demo"
+        proj.mkdir(parents=True)
+        (proj / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1"\ndependencies = ["httpx"]\n'
+            '[project.scripts]\ndemo-cli = "demo:main"\n',
+            encoding="utf-8",
+        )
+        (proj / "README.md").write_text("# Demo\n\nDoes things.", encoding="utf-8")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        indexer = ProjectIndexer(vault)
+        info = indexer._analyze_project(proj)
+        return indexer, info
+
+    def test_interfaces_section_in_card(self, tmp_path):
+        indexer, info = self._make_project(tmp_path)
+        content = indexer.generate_markdown(info)
+        assert "## Interfaces" in content
+        assert "demo-cli" in content
+        assert "pyproject.toml" in content
+
+    def test_pending_sections_when_ollama_down(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
+        indexer, info = self._make_project(tmp_path)
+        monkeypatch.setattr(
+            indexer, "_generate_llm_sections", MagicMock(return_value=None)
+        )
+        path = indexer.save_to_obsidian(info)
+        content = path.read_text(encoding="utf-8")
+        assert "_pending (Ollama unavailable)_" in content
+        assert "clawdiney_digest" not in content  # digest withheld → retry next run
+
+    def test_llm_skipped_when_digest_unchanged(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
+        indexer, info = self._make_project(tmp_path)
+        llm = MagicMock(
+            return_value={"Purpose": "Does demo things.", "Architecture": "One module."}
+        )
+        monkeypatch.setattr(indexer, "_generate_llm_sections", llm)
+        path = indexer.save_to_obsidian(info)
+        assert "clawdiney_digest" in path.read_text(encoding="utf-8")
+        assert llm.call_count == 1
+
+        # Second save with unchanged inputs: LLM not called, sections reused
+        indexer.save_to_obsidian(info)
+        assert llm.call_count == 1
+        content = path.read_text(encoding="utf-8")
+        assert "Does demo things." in content

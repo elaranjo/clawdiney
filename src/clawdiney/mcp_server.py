@@ -188,14 +188,26 @@ def explore_graph(note_name: str, vault: str = None) -> str:
     try:
         engine = get_engine(vault=vault)
         logger.info(f"Explore graph: {note_name}")
-        related = engine.get_related_notes(note_name, vault=vault)
-        if not related:
+        vault_name = vault or engine.current_vault
+        neighbors = engine.storage.expand_neighborhood(note_name, vault_name, depth=1)
+        if not neighbors:
             logger.info(f"No connections found for: {note_name}")
             return f"No direct connections found for note: {note_name}"
-        logger.info(f"Found {len(related)} related notes for: {note_name}")
-        return f"Notes connected to {note_name}:\n" + "\n".join(
-            [f"- {r}" for r in related]
-        )
+
+        lines = []
+        for item in neighbors:
+            label = item["path"] or item["name"]
+            if item["kind"] in ("note", "tag"):
+                lines.append(f"- {label}")
+            else:
+                entry = f"- {item['name']} [{item['kind']}] via {item['rel_type']}"
+                if item["confidence"] is not None and item["confidence"] < 1.0:
+                    entry += f" (confidence {item['confidence']:.2f})"
+                if item["evidence"]:
+                    entry += f" — evidence: {item['evidence']}"
+                lines.append(entry)
+        logger.info(f"Found {len(neighbors)} related entities for: {note_name}")
+        return f"Entities connected to {note_name}:\n" + "\n".join(lines)
     except Exception as e:
         logger.error(f"explore_graph failed: {e}")
         return f"Error in explore_graph: {str(e)}"
@@ -335,6 +347,90 @@ def detect_vault() -> str:
         f"Total de vaults disponíveis: {len(vaults)}\n\n"
         f'Dica: use vault="{vault_id}" explicitamente se precisar forçar um vault específico.'
     )
+
+
+@mcp.tool()
+def get_project_card(name: str, vault: str = None) -> str:
+    """
+    Retrieve the full project card (Purpose, Stack, Architecture, Interfaces)
+    for a project by name. Use this as the first call when working with a
+    project you don't know yet.
+
+    Args:
+        name: Project name (e.g., "clawdiney")
+        vault: Optional vault name (auto-detected from current directory, falls back to default)
+    """
+    try:
+        engine = get_engine(vault=vault)
+        logger.info(f"Get project card: {name}")
+        candidates = engine.resolve_note(name, vault=vault)
+        if not candidates:
+            return f"No project card found for '{name}'. No matching notes in vault."
+        exact = next(
+            (
+                c
+                for c in candidates
+                if c["filename"].lower() in (f"{name.lower()}.md", name.lower())
+            ),
+            None,
+        )
+        if exact is None and len(candidates) > 1:
+            listing = "\n".join(f"- {c['path']}" for c in candidates[:10])
+            return f"No exact card for '{name}'. Closest candidates:\n{listing}"
+        card = exact or candidates[0]
+        note = engine.get_note_by_path(card["path"], vault=vault)
+        return f"Project card: {note['path']}\n\n{note['content']}"
+    except Exception as e:
+        logger.error(f"get_project_card failed: {e}")
+        return f"Error in get_project_card: {str(e)}"
+
+
+@mcp.tool()
+def how_do_projects_relate(project_a: str, project_b: str, vault: str = None) -> str:
+    """
+    Find how two projects are connected in the knowledge graph: shared
+    dependencies, datastores, patterns, or direct API calls. Returns up to
+    5 shortest paths with relation types and evidence.
+
+    Args:
+        project_a: First project name
+        project_b: Second project name
+        vault: Optional vault name (auto-detected from current directory, falls back to default)
+    """
+    try:
+        engine = get_engine(vault=vault)
+        vault_name = vault or engine.current_vault
+        storage = engine.storage
+
+        for label, ref in (("project_a", project_a), ("project_b", project_b)):
+            if storage._find_entity_id(vault_name, ref) is None:
+                return (
+                    f"Unknown entity for {label}: '{ref}'. "
+                    f"Run the project indexer first, or check the name with resolve_note."
+                )
+
+        paths = storage.find_paths(vault_name, project_a, project_b)
+        if not paths:
+            return (
+                f"No relationship found between '{project_a}' and '{project_b}' "
+                f"within 3 hops in the knowledge graph."
+            )
+
+        lines = [f"Relationships between {project_a} and {project_b}:"]
+        for i, hops in enumerate(paths, 1):
+            chain = []
+            for hop in hops:
+                seg = f"{hop['source']} -{hop['rel_type']}-> {hop['target']} [{hop['target_kind']}]"
+                if hop["confidence"] < 1.0:
+                    seg += f" (confidence {hop['confidence']:.2f})"
+                if hop["evidence"]:
+                    seg += f" — evidence: {hop['evidence']}"
+                chain.append(seg)
+            lines.append(f"{i}. " + " | ".join(chain))
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"how_do_projects_relate failed: {e}")
+        return f"Error in how_do_projects_relate: {str(e)}"
 
 
 # --- MCP Write Tools ---

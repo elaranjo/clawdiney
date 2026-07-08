@@ -49,7 +49,9 @@ Optional:
 |-------|---------|--------------|
 | **Reranker** | `pip install clawdiney[rerank]` | Cross-encoder reranking (`BAAI/bge-reranker-v2-m3`, ~2GB RAM). Without it, searches use RRF ordering — still fully functional. |
 
-**Configuration:** `BRAIN_DB_PATH` env var sets the database location (default: `~/.clawdiney/brain.db`).
+**Configuration:** `BRAIN_DB_PATH` env var sets the database location (default: `~/.clawdiney/brain.db`). For the project knowledge graph: `CARD_LLM_MODEL` (Ollama model for project card Purpose/Architecture sections, default `qwen3`) and `ENTITY_RESOLUTION_THRESHOLD` (similarity cutoff for merging duplicate entities, default `0.85`).
+
+**Cross-project intelligence:** the project indexer builds a typed knowledge graph (dependencies, shared datastores, patterns) from your codebases. Agents can call `get_project_card("name")` for a project overview and `how_do_projects_relate("a", "b")` to see how two projects connect, with evidence.
 
 **Supported Systems:**
 - ✅ Linux (Ubuntu, Debian, Fedora, Arch, etc.)
