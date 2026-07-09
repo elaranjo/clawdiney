@@ -322,8 +322,8 @@ def health_check() -> str:
 @mcp.tool()
 def detect_vault() -> str:
     """
-    Detecta qual vault corresponde ao diretório de trabalho atual.
-    Use para confirmar em qual vault as ferramentas de busca/escrita estão operando.
+    Detect which vault corresponds to the current working directory.
+    Use this to confirm which vault the search/write tools are operating on.
     """
     vault_id = _detect_vault_from_cwd() or Config.get_default_vault()
     vaults = Config.get_all_vaults()

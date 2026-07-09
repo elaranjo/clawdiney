@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cliente HTTP simples para testar o servidor MCP do Clawdiney."""
+"""Simple HTTP client to test Clawdiney's MCP server."""
 
 import asyncio
 import json
@@ -60,7 +60,7 @@ def setup_mock_httpx():
 
 
 async def async_test_mcp_server():
-    """Testa o servidor MCP usando HTTP direto."""
+    """Test the MCP server over direct HTTP."""
     url = "http://localhost:8006/mcp"
     headers = {
         "Content-Type": "application/json",
@@ -69,8 +69,8 @@ async def async_test_mcp_server():
 
     async with httpx.AsyncClient() as client:
         try:
-            # Etapa 1: Inicializar o servidor
-            print("🔧 Inicializando servidor MCP...")
+            # Step 1: Initialize the server
+            print("🔧 Initializing MCP server...")
             init_data = {
                 "jsonrpc": "2.0",
                 "method": "initialize",
@@ -83,33 +83,31 @@ async def async_test_mcp_server():
             }
 
             response = await client.post(url, json=init_data, headers=headers)
-            print(f"Status da resposta: {response.status_code}")
+            print(f"Response status: {response.status_code}")
 
-            # Processar a resposta SSE
+            # Process the SSE response
             if response.status_code == 200:
-                # Ler o conteúdo da resposta
+                # Read the response content
                 content = response.text
-                print(f"Conteúdo da resposta: {content}")
+                print(f"Response content: {content}")
 
-                # Tentar parsear o JSON
+                # Try to parse the JSON
                 try:
-                    # Extrair o JSON dos dados SSE
+                    # Extract the JSON payload from the SSE data
                     lines = content.split("\n")
                     for line in lines:
                         if line.startswith("data: "):
-                            json_str = line[6:]  # Remover 'data: '
+                            json_str = line[6:]  # Strip 'data: '
                             result = json.loads(json_str)
                             if "result" in result:
-                                print("✅ Servidor inicializado com sucesso!")
-                                print(
-                                    f"Informações do servidor: {result['result']['serverInfo']}"
-                                )
+                                print("✅ Server initialized successfully!")
+                                print(f"Server info: {result['result']['serverInfo']}")
                                 break
                 except json.JSONDecodeError as e:
-                    print(f"Erro ao parsear JSON: {e}")
+                    print(f"Error parsing JSON: {e}")
 
-            # Etapa 2: Testar a função search_brain
-            print("\n🔍 Testando função search_brain...")
+            # Step 2: Test the search_brain function
+            print("\n🔍 Testing search_brain function...")
             search_data = {
                 "jsonrpc": "2.0",
                 "method": "call_tool",
@@ -121,40 +119,38 @@ async def async_test_mcp_server():
             }
 
             response = await client.post(url, json=search_data, headers=headers)
-            print(f"Status da resposta: {response.status_code}")
+            print(f"Response status: {response.status_code}")
 
             if response.status_code == 200:
                 content = response.text
-                print(f"Conteúdo da resposta: {content}")
+                print(f"Response content: {content}")
 
-                # Tentar parsear o JSON
+                # Try to parse the JSON
                 try:
                     lines = content.split("\n")
                     for line in lines:
                         if line.startswith("data: "):
-                            json_str = line[6:]  # Remover 'data: '
+                            json_str = line[6:]  # Strip 'data: '
                             result = json.loads(json_str)
                             if "result" in result:
-                                print("✅ Função search_brain executada com sucesso!")
+                                print("✅ search_brain executed successfully!")
                                 content_result = result["result"].get("content", "")
                                 if len(content_result) > 500:
                                     content_result = (
-                                        content_result[:500] + "... (truncado)"
+                                        content_result[:500] + "... (truncated)"
                                     )
-                                print(f"Resultado: {content_result}")
+                                print(f"Result: {content_result}")
                                 break
                             elif "error" in result:
-                                print(
-                                    f"❌ Erro na função search_brain: {result['error']}"
-                                )
+                                print(f"❌ Error in search_brain: {result['error']}")
                                 break
                 except json.JSONDecodeError as e:
-                    print(f"Erro ao parsear JSON: {e}")
+                    print(f"Error parsing JSON: {e}")
 
             return True
 
         except Exception as e:
-            print(f"❌ Erro ao conectar ao servidor: {e}")
+            print(f"❌ Error connecting to server: {e}")
             return False
 
 
