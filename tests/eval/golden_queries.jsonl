@@ -1,0 +1,8 @@
+{"query": "zorbulator gateway JWT signing key rotation", "expected_paths": ["Auth_SOP.md"]}
+{"query": "how does the system know who is making a request after they log in", "expected_paths": ["Auth_Flow_Explainer.md"]}
+{"query": "Docker image registry CI pipeline on merge", "expected_paths": ["Deploy_Pipeline.md"]}
+{"query": "reverting production to the previous version after a bad release", "expected_paths": ["Rollback_Procedure.md"]}
+{"query": "embedded vector database options compared for similarity search", "expected_paths": ["Vector_DB_Comparison.md"]}
+{"query": "why rerank search results with a cross-encoder instead of embeddings alone", "expected_paths": ["Reranking_Explainer.md"]}
+{"query": "pasta carbonara recipe ingredients", "expected_paths": ["Cooking_Notes.md"]}
+{"query": "watering tomato plants in the morning", "expected_paths": ["Gardening_Tips.md"]}

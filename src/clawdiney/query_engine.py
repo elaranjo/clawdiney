@@ -265,23 +265,29 @@ class BrainQueryEngine:
         return chain
 
     def _hybrid_retrieve(
-        self, query: str, vaults: list[str], n_results: int
+        self, query: str, vaults: list[str], n_results: int, mode: str = "hybrid"
     ) -> list[dict[str, Any]]:
-        """BM25 + vector retrieval fused with RRF. Fail-soft per retriever."""
+        """BM25 and/or vector retrieval fused with RRF. Fail-soft per retriever.
+
+        mode: "hybrid" (both retrievers, default), "bm25" (BM25 only,
+        skips the embedding call), or "vector" (vector KNN only).
+        """
         fetch_k = n_results * 3
 
         bm25_rows: list[dict[str, Any]] = []
-        try:
-            bm25_rows = self.storage.search_bm25(query, vaults, fetch_k)
-        except Exception as exc:
-            logger.warning("BM25 retrieval failed: %s", exc)
+        if mode in ("hybrid", "bm25"):
+            try:
+                bm25_rows = self.storage.search_bm25(query, vaults, fetch_k)
+            except Exception as exc:
+                logger.warning("BM25 retrieval failed: %s", exc)
 
         vector_rows: list[dict[str, Any]] = []
-        try:
-            embedding = self.get_embedding(query)
-            vector_rows = self.storage.search_vectors(embedding, vaults, fetch_k)
-        except Exception as exc:
-            logger.warning("Vector retrieval failed: %s", exc)
+        if mode in ("hybrid", "vector"):
+            try:
+                embedding = self.get_embedding(query)
+                vector_rows = self.storage.search_vectors(embedding, vaults, fetch_k)
+            except Exception as exc:
+                logger.warning("Vector retrieval failed: %s", exc)
 
         return rrf_fuse([bm25_rows, vector_rows])
 
@@ -297,14 +303,20 @@ class BrainQueryEngine:
                 unique.append(row)
         return unique
 
-    def query(
+    def retrieve(
         self,
         text: str,
         n_results: int = SEARCH_N_RESULTS_DEFAULT,
-        expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
+        mode: str = "hybrid",
         vault_override: str | None = None,
-    ) -> str:
+    ) -> list[dict[str, Any]]:
+        """Retrieve ranked, deduped (and optionally reranked) chunk rows.
+
+        Structured counterpart to `query()` for callers (e.g. the eval
+        harness) that need candidate rows rather than a formatted briefing.
+        mode: "hybrid" (default), "bm25", or "vector" — see `_hybrid_retrieve`.
+        """
         processed_query = self.query_preprocessor.preprocess(text)
         if processed_query != text and logger.isEnabledFor(logging.DEBUG):
             logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
@@ -315,7 +327,9 @@ class BrainQueryEngine:
                 v for v in fallback_chain if v != vault_override
             ]
 
-        rows = self._hybrid_retrieve(processed_query, fallback_chain, n_results)
+        rows = self._hybrid_retrieve(
+            processed_query, fallback_chain, n_results, mode=mode
+        )
         rows = self._dedupe_by_note(rows)
 
         if use_rerank and Config.ENABLE_RERANK and rows:
@@ -323,7 +337,22 @@ class BrainQueryEngine:
             reranked = get_reranker().rerank(processed_query, pairs)
             rows = [meta for _doc, meta in reranked]
 
-        rows = rows[:n_results]
+        return rows[:n_results]
+
+    def query(
+        self,
+        text: str,
+        n_results: int = SEARCH_N_RESULTS_DEFAULT,
+        expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
+        use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
+        vault_override: str | None = None,
+    ) -> str:
+        rows = self.retrieve(
+            text,
+            n_results=n_results,
+            use_rerank=use_rerank,
+            vault_override=vault_override,
+        )
         return self._build_context(rows, expand_graph)
 
     def _build_context(self, rows: list[dict[str, Any]], expand_graph: bool) -> str:
