@@ -262,9 +262,77 @@ class TestSchemaV2Migration:
             )
         }
         assert "entity_vectors" in tables
-        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 3
         assert "keep.md" in migrated.get_document_hashes("default")
         migrated.close()
+
+
+class TestSchemaV3Migration:
+    def test_v2_db_migrates_in_place(self, tmp_path):
+        db = tmp_path / "brain.db"
+        store = BrainStorage(db_path=db, dimension=DIM)
+        _index_note(store, "keep.md", "existing data survives", wikilinks=["Unique"])
+        _index_note(store, "Unique.md", "target note")
+        # Simulate a v2 database: drop the bi-temporal columns, rebuild
+        # relations with the old blanket UNIQUE constraint, set user_version=2
+        store.conn.execute("ALTER TABLE entities DROP COLUMN valid_at")
+        store.conn.execute("ALTER TABLE entities DROP COLUMN invalidated_at")
+        store.conn.execute("ALTER TABLE relations RENAME TO relations_v2_shape")
+        store.conn.execute(
+            """
+            CREATE TABLE relations (
+                id INTEGER PRIMARY KEY,
+                source_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                target_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                rel_type TEXT NOT NULL,
+                evidence_chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                UNIQUE(source_id, target_id, rel_type)
+            )
+            """
+        )
+        store.conn.execute(
+            "INSERT INTO relations (id, source_id, target_id, rel_type, "
+            "evidence_chunk_id, confidence) "
+            "SELECT id, source_id, target_id, rel_type, evidence_chunk_id, confidence "
+            "FROM relations_v2_shape"
+        )
+        store.conn.execute("DROP TABLE relations_v2_shape")
+        store.conn.execute("PRAGMA user_version = 2")
+        store.conn.commit()
+        store.close()
+
+        migrated = BrainStorage(db_path=db, dimension=DIM)
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        cols = {
+            row["name"] for row in migrated.conn.execute("PRAGMA table_info(entities)")
+        }
+        assert {"valid_at", "invalidated_at"} <= cols
+        rel_cols = {
+            row["name"] for row in migrated.conn.execute("PRAGMA table_info(relations)")
+        }
+        assert {"valid_at", "invalidated_at"} <= rel_cols
+        # Existing relation preserved and currently valid
+        assert migrated.get_related_notes("keep.md", "default") == ["Unique.md"]
+        rows = migrated.conn.execute(
+            "SELECT valid_at, invalidated_at FROM relations"
+        ).fetchall()
+        assert rows and all(r["invalidated_at"] is None for r in rows)
+        assert all(r["valid_at"] is not None for r in rows)
+        migrated.close()
+
+    def test_migration_is_idempotent(self, tmp_path):
+        db = tmp_path / "brain.db"
+        store = BrainStorage(db_path=db, dimension=DIM)
+        _index_note(store, "a.md", "content")
+        store.close()
+
+        # Re-opening an already-v3 database must not error or re-migrate.
+        reopened = BrainStorage(db_path=db, dimension=DIM)
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        reopened._migrate_v2_to_v3(reopened.conn)
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        reopened.close()
 
 
 class TestTypedEntities:
@@ -366,3 +434,175 @@ class TestPathsAndTypedExpansion:
         assert result[0]["kind"] == "library"
         assert result[0]["confidence"] == 1.0
         assert result[0]["rel_type"] == "DEPENDS_ON"
+
+
+class TestTemporalFacts:
+    """Bi-temporal supersede semantics for the semantic (LLM-extracted) layer."""
+
+    def test_new_entity_has_valid_at_and_no_invalidated_at(self, storage):
+        eid = storage.upsert_typed_entity("default", "sqlite-vec", "library")
+        row = storage.conn.execute(
+            "SELECT valid_at, invalidated_at FROM entities WHERE id = ?", (eid,)
+        ).fetchone()
+        assert row["valid_at"] is not None
+        assert row["invalidated_at"] is None
+
+    def test_supersede_invalidates_old_row_and_inserts_new(self, storage):
+        pat = storage.upsert_typed_entity("default", "repository", "pattern")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        first = storage.conn.execute(
+            "SELECT id, confidence, valid_at, invalidated_at FROM relations "
+            "WHERE rel_type = 'USES_PATTERN'"
+        ).fetchone()
+        assert first["invalidated_at"] is None
+
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.9}],
+        )
+        rows = storage.conn.execute(
+            "SELECT id, confidence, valid_at, invalidated_at FROM relations "
+            "WHERE rel_type = 'USES_PATTERN' ORDER BY id"
+        ).fetchall()
+
+        # Both rows still present (history preserved) ...
+        assert len(rows) == 2
+        old_row = next(r for r in rows if r["id"] == first["id"])
+        new_row = next(r for r in rows if r["id"] != first["id"])
+        # ... old one invalidated, new one current with the new value
+        assert old_row["invalidated_at"] is not None
+        assert old_row["confidence"] == 0.6
+        assert new_row["invalidated_at"] is None
+        assert new_row["confidence"] == 0.9
+
+    def test_unchanged_fact_is_not_rewritten(self, storage):
+        pat = storage.upsert_typed_entity("default", "repository", "pattern")
+        rel = {"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.6}
+        storage.replace_project_relations("default", "proj", "semantic", [rel])
+        first_id = storage.conn.execute(
+            "SELECT id FROM relations WHERE rel_type = 'USES_PATTERN'"
+        ).fetchone()["id"]
+
+        storage.replace_project_relations("default", "proj", "semantic", [rel])
+        rows = storage.conn.execute(
+            "SELECT id, invalidated_at FROM relations WHERE rel_type = 'USES_PATTERN'"
+        ).fetchall()
+
+        assert len(rows) == 1
+        assert rows[0]["id"] == first_id
+        assert rows[0]["invalidated_at"] is None
+
+    def test_fact_no_longer_asserted_is_invalidated_not_deleted(self, storage):
+        pat = storage.upsert_typed_entity("default", "repository", "pattern")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        storage.replace_project_relations("default", "proj", "semantic", [])
+
+        rows = storage.conn.execute(
+            "SELECT invalidated_at FROM relations WHERE rel_type = 'USES_PATTERN'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["invalidated_at"] is not None
+
+    def test_default_query_sees_only_current_facts(self, storage):
+        storage.upsert_typed_entity("default", "proj-a", "project")
+        lib = storage.upsert_typed_entity("default", "some-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj-a",
+            "semantic",
+            [{"target_id": lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
+        )
+        storage.replace_project_relations("default", "proj-a", "semantic", [])
+
+        # Fact invalidated -> default (current-only) expansion no longer sees it
+        result = storage.expand_neighborhood("proj-a", "default", depth=1)
+        assert result == []
+
+    def test_as_of_query_sees_historical_fact(self, storage):
+        pat = storage.upsert_typed_entity("default", "repository", "pattern")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        mid_point = storage.conn.execute(
+            "SELECT invalidated_at, valid_at FROM relations WHERE rel_type = 'USES_PATTERN'"
+        ).fetchone()["valid_at"]
+
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": pat, "rel_type": "USES_PATTERN", "confidence": 0.9}],
+        )
+
+        as_of_result = storage.expand_neighborhood(
+            "proj", "default", depth=1, as_of=mid_point
+        )
+        assert as_of_result and as_of_result[0]["confidence"] == 0.6
+
+        current_result = storage.expand_neighborhood("proj", "default", depth=1)
+        assert current_result and current_result[0]["confidence"] == 0.9
+
+    def test_find_paths_as_of_sees_historical_relation(self, storage):
+        storage.upsert_typed_entity("default", "proj-a", "project")
+        storage.upsert_typed_entity("default", "proj-b", "project")
+        old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
+        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
+
+        storage.replace_project_relations(
+            "default",
+            "proj-a",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj-b",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
+        )
+        before_swap = storage.conn.execute(
+            "SELECT MAX(valid_at) AS t FROM relations"
+        ).fetchone()["t"]
+
+        # proj-a moves on to a different library; proj-b keeps the old one
+        storage.replace_project_relations(
+            "default",
+            "proj-a",
+            "semantic",
+            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
+        )
+
+        assert storage.find_paths("default", "proj-a", "proj-b") == []
+        historical = storage.find_paths(
+            "default", "proj-a", "proj-b", as_of=before_swap
+        )
+        assert historical
+        assert any(
+            hop["target"] == "old-lib" or hop["source"] == "old-lib"
+            for hop in historical[0]
+        )
+
+    def test_get_related_notes_default_and_as_of(self, storage):
+        _index_note(storage, "A.md", "a body", wikilinks=["B"])
+        _index_note(storage, "B.md", "b body")
+        valid_at = storage.conn.execute(
+            "SELECT valid_at FROM relations WHERE rel_type = 'LINKS_TO'"
+        ).fetchone()["valid_at"]
+
+        assert storage.get_related_notes("A.md", "default") == ["B.md"]
+        assert storage.get_related_notes("A.md", "default", as_of=valid_at) == ["B.md"]
