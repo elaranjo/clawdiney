@@ -24,7 +24,7 @@ class TestOllamaProvider:
         provider.mock_client.embed.return_value = {"embeddings": [[0.1, 0.2]]}
         result = provider.embed("hello")
         provider.mock_client.embed.assert_called_once_with(
-            model="bge-m3", input="hello"
+            model="bge-m3", input="hello", keep_alive="30m"
         )
         assert result == [0.1, 0.2]
 
@@ -32,7 +32,7 @@ class TestOllamaProvider:
         provider.mock_client.embed.return_value = {"embeddings": [[0.1], [0.2]]}
         result = provider.embed_batch(["a", "b"])
         provider.mock_client.embed.assert_called_once_with(
-            model="bge-m3", input=["a", "b"]
+            model="bge-m3", input=["a", "b"], keep_alive="30m"
         )
         assert result == [[0.1], [0.2]]
 
