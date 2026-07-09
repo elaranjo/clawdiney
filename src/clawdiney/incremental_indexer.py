@@ -71,9 +71,19 @@ class IncrementalIndexer:
         deleted = [path for path in stored if path not in current]
         return new_or_modified, deleted
 
-    def sync_file(self, relative_path: str, strategy: str | None = None) -> int:
+    def sync_file(
+        self,
+        relative_path: str,
+        strategy: str | None = None,
+        agent_id: str = "default",
+    ) -> int:
         """
         Re-index a single note (atomic replace in one transaction).
+
+        agent_id: owning namespace for this document (see
+        BrainStorage.upsert_note). Defaults to "default" for ordinary vault
+        content; callers writing on behalf of a specific agent (e.g.
+        memory_writer) pass their own agent_id.
 
         Returns number of chunks indexed (0 if file empty/skipped).
         """
@@ -84,7 +94,11 @@ class IncrementalIndexer:
             self.storage.delete_note(self.vault_name, relative_path)
             return 0
         chunks = index_note(
-            self.storage, self.provider, note_record, vault_name=self.vault_name
+            self.storage,
+            self.provider,
+            note_record,
+            vault_name=self.vault_name,
+            agent_id=agent_id,
         )
         logger.info(f"Synced: {relative_path} ({chunks} chunks)")
         return chunks

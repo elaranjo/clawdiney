@@ -162,7 +162,7 @@ def _format_conflicts(conflicts):
 
 
 @mcp.tool()
-def search_brain(query: str, vault: str = None) -> str:
+def search_brain(query: str, vault: str = None, agent_id: str = None) -> str:
     """
     Search Clawdiney for architectural patterns, SOPs, and design system components.
     Use this whenever you need to verify a standard or find existing implementation patterns.
@@ -170,6 +170,9 @@ def search_brain(query: str, vault: str = None) -> str:
     Args:
         query: Search query
         vault: Optional vault name to scope the search (auto-detected from current directory, falls back to default)
+        agent_id: Optional namespace scope. Omitted/"default" searches shared
+            content only; any other value also includes that agent's own
+            memory (see write_memory) alongside shared content.
     """
     try:
         engine = get_engine(vault=vault)
@@ -179,7 +182,7 @@ def search_brain(query: str, vault: str = None) -> str:
             else f"Search query: {query}"
         )
         vault_label = engine.current_vault
-        rows = engine.retrieve(query, vault_override=vault)
+        rows = engine.retrieve(query, vault_override=vault, agent_id=agent_id)
         briefing = engine.build_context(rows, expand_graph=True)
         conflicts_section = _format_conflicts(engine.get_conflicts_for_rows(rows))
         return (
@@ -192,7 +195,7 @@ def search_brain(query: str, vault: str = None) -> str:
 
 
 @mcp.tool()
-def explore_graph(note_name: str, vault: str = None) -> str:
+def explore_graph(note_name: str, vault: str = None, agent_id: str = None) -> str:
     """
     Explore the knowledge graph to find notes related to a specific topic.
     Returns a list of connected notes via:
@@ -202,12 +205,17 @@ def explore_graph(note_name: str, vault: str = None) -> str:
     Args:
         note_name: Name of the note to explore
         vault: Optional vault name (auto-detected from current directory, falls back to default)
+        agent_id: Optional namespace scope. Omitted/"default" traverses shared
+            relations only; any other value also includes that agent's own.
     """
     try:
         engine = get_engine(vault=vault)
         logger.info(f"Explore graph: {note_name}")
         vault_name = vault or engine.current_vault
-        neighbors = engine.storage.expand_neighborhood(note_name, vault_name, depth=1)
+        agent_ids = None if agent_id in (None, "default") else [agent_id, "default"]
+        neighbors = engine.storage.expand_neighborhood(
+            note_name, vault_name, depth=1, agent_ids=agent_ids
+        )
         conflicts_section = _format_conflicts(
             engine.storage.get_conflicts(vault_name, note_name)
         )
@@ -413,7 +421,9 @@ def get_project_card(name: str, vault: str = None) -> str:
 
 
 @mcp.tool()
-def how_do_projects_relate(project_a: str, project_b: str, vault: str = None) -> str:
+def how_do_projects_relate(
+    project_a: str, project_b: str, vault: str = None, agent_id: str = "*"
+) -> str:
     """
     Find how two projects are connected in the knowledge graph: shared
     dependencies, datastores, patterns, or direct API calls. Returns up to
@@ -423,6 +433,13 @@ def how_do_projects_relate(project_a: str, project_b: str, vault: str = None) ->
         project_a: First project name
         project_b: Second project name
         vault: Optional vault name (auto-detected from current directory, falls back to default)
+        agent_id: Namespace scope for the traversal. Defaults to "*" (no
+            filtering — project/dependency relations come from the shared
+            project-indexer pipeline, not from any particular agent, so
+            unfiltered is the natural default). Pass a specific agent_id to
+            additionally restrict to that agent's own relations plus shared
+            ("default") ones — an explicit opt-in for cross-namespace
+            queries once agent-scoped project data exists.
     """
     try:
         engine = get_engine(vault=vault)
@@ -436,7 +453,10 @@ def how_do_projects_relate(project_a: str, project_b: str, vault: str = None) ->
                     f"Run the project indexer first, or check the name with resolve_note."
                 )
 
-        paths = storage.find_paths(vault_name, project_a, project_b)
+        agent_ids = None if agent_id in (None, "*") else [agent_id, "default"]
+        paths = storage.find_paths(
+            vault_name, project_a, project_b, agent_ids=agent_ids
+        )
         if not paths:
             return (
                 f"No relationship found between '{project_a}' and '{project_b}' "

@@ -25,7 +25,14 @@ def _vec(seed: float) -> list[float]:
 
 
 def _index_note(
-    store, path, content, vault="default", wikilinks=None, tags=None, seed=1.0
+    store,
+    path,
+    content,
+    vault="default",
+    wikilinks=None,
+    tags=None,
+    seed=1.0,
+    agent_id="default",
 ):
     return store.upsert_note(
         vault=vault,
@@ -36,6 +43,7 @@ def _index_note(
         embeddings=[_vec(seed)],
         wikilinks=wikilinks or [],
         tags=tags or [],
+        agent_id=agent_id,
     )
 
 
@@ -262,7 +270,7 @@ class TestSchemaV2Migration:
             )
         }
         assert "entity_vectors" in tables
-        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 5
         assert "keep.md" in migrated.get_document_hashes("default")
         migrated.close()
 
@@ -303,7 +311,7 @@ class TestSchemaV3Migration:
         store.close()
 
         migrated = BrainStorage(db_path=db, dimension=DIM)
-        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 5
         cols = {
             row["name"] for row in migrated.conn.execute("PRAGMA table_info(entities)")
         }
@@ -329,10 +337,11 @@ class TestSchemaV3Migration:
 
         # Re-opening an already-migrated database must not error or re-migrate.
         reopened = BrainStorage(db_path=db, dimension=DIM)
-        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 5
         reopened._migrate_v2_to_v3(reopened.conn)
         reopened._migrate_v3_to_v4(reopened.conn)
-        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        reopened._migrate_v4_to_v5(reopened.conn)
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 5
         reopened.close()
 
 
@@ -742,3 +751,119 @@ class TestConflictResolution:
         # expand_neighborhood (current-only) now sees only the winner
         result = storage.expand_neighborhood("proj", "default", depth=1)
         assert [r["name"] for r in result] == ["new-lib"]
+
+
+class TestAgentNamespacing:
+    def test_new_entity_defaults_to_default_agent(self, storage):
+        eid = storage.upsert_typed_entity("default", "sqlite-vec", "library")
+        row = storage.conn.execute(
+            "SELECT agent_id FROM entities WHERE id = ?", (eid,)
+        ).fetchone()
+        assert row["agent_id"] == "default"
+
+    def test_new_document_defaults_to_default_agent(self, storage):
+        _index_note(storage, "a.md", "content")
+        row = storage.conn.execute(
+            "SELECT agent_id FROM documents WHERE path = 'a.md'"
+        ).fetchone()
+        assert row["agent_id"] == "default"
+
+    def test_same_named_entity_different_agents_no_collision(self, storage):
+        default_id = storage.upsert_typed_entity("default", "User", "concept")
+        agent_a_id = storage.upsert_typed_entity(
+            "default", "User", "concept", agent_id="agent-a"
+        )
+        assert default_id != agent_a_id
+        rows = storage.conn.execute(
+            "SELECT id, agent_id FROM entities WHERE name = 'User' AND kind = 'concept'"
+        ).fetchall()
+        assert {r["agent_id"] for r in rows} == {"default", "agent-a"}
+
+    def test_find_similar_entity_scoped_by_agent(self, storage):
+        storage.upsert_typed_entity(
+            "default", "User", "concept", embedding=_vec(2.0), agent_id="agent-a"
+        )
+        # Same vector, but querying agent-b's namespace should not see it.
+        assert (
+            storage.find_similar_entity(
+                "default", "concept", _vec(2.0), 0.5, agent_id="agent-b"
+            )
+            is None
+        )
+        hit = storage.find_similar_entity(
+            "default", "concept", _vec(2.0), 0.5, agent_id="agent-a"
+        )
+        assert hit and hit["name"] == "User"
+
+    def test_search_bm25_agent_scoping(self, storage):
+        _index_note(storage, "shared.md", "the flux capacitor design")
+        _index_note(
+            storage,
+            "40_Memory/agent-a/note.md",
+            "flux capacitor notes",
+            agent_id="agent-a",
+        )
+        _index_note(
+            storage,
+            "40_Memory/agent-b/note.md",
+            "flux capacitor notes",
+            agent_id="agent-b",
+        )
+
+        unfiltered = storage.search_bm25("flux capacitor", ["default"], k=10)
+        assert len(unfiltered) == 3
+
+        scoped_to_a = storage.search_bm25(
+            "flux capacitor", ["default"], k=10, agent_ids=["agent-a", "default"]
+        )
+        assert {r["path"] for r in scoped_to_a} == {
+            "shared.md",
+            "40_Memory/agent-a/note.md",
+        }
+
+    def test_search_vectors_agent_scoping(self, storage):
+        _index_note(storage, "shared.md", "shared body", seed=1.0)
+        _index_note(
+            storage,
+            "40_Memory/agent-a/note.md",
+            "agent a body",
+            agent_id="agent-a",
+            seed=1.0,
+        )
+
+        unfiltered = storage.search_vectors(_vec(1.0), ["default"], k=10)
+        assert len(unfiltered) == 2
+
+        scoped = storage.search_vectors(
+            _vec(1.0), ["default"], k=10, agent_ids=["agent-b", "default"]
+        )
+        assert {r["path"] for r in scoped} == {"shared.md"}
+
+    def test_expand_neighborhood_agent_scoping(self, storage):
+        proj = storage.upsert_typed_entity("default", "proj", "project")
+        shared_lib = storage.upsert_typed_entity("default", "shared-lib", "library")
+        agent_lib = storage.upsert_typed_entity(
+            "default", "agent-lib", "library", agent_id="agent-a"
+        )
+        storage.conn.execute(
+            "INSERT INTO relations (source_id, target_id, rel_type, confidence, valid_at) "
+            "SELECT ?, ?, 'DEPENDS_ON', 1.0, datetime('now')",
+            (proj, shared_lib),
+        )
+        storage.conn.execute(
+            "UPDATE entities SET agent_id = 'agent-a' WHERE id = ?", (proj,)
+        )
+        storage.conn.execute(
+            "INSERT INTO relations (source_id, target_id, rel_type, confidence, valid_at) "
+            "SELECT ?, ?, 'DEPENDS_ON', 1.0, datetime('now')",
+            (proj, agent_lib),
+        )
+        storage.conn.commit()
+
+        unfiltered = storage.expand_neighborhood("proj", "default", depth=1)
+        assert {r["name"] for r in unfiltered} == {"shared-lib", "agent-lib"}
+
+        scoped_out = storage.expand_neighborhood(
+            "proj", "default", depth=1, agent_ids=["agent-b", "default"]
+        )
+        assert scoped_out == []

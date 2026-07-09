@@ -287,20 +287,39 @@ class BrainQueryEngine:
             chain.append("general")
         return chain
 
+    @staticmethod
+    def _resolve_agent_scope(agent_id: str | None) -> list[str] | None:
+        """None (default) applies no agent filtering. A non-default agent_id
+        scopes results to that agent's own data plus shared ("default")
+        content; agent_id="default" (or omitted) is equivalent to no filter
+        since everything already lives there in single-agent installs."""
+        if agent_id is None or agent_id == "default":
+            return None
+        return [agent_id, "default"]
+
     def _hybrid_retrieve(
-        self, query: str, vaults: list[str], n_results: int, mode: str = "hybrid"
+        self,
+        query: str,
+        vaults: list[str],
+        n_results: int,
+        mode: str = "hybrid",
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 and/or vector retrieval fused with RRF. Fail-soft per retriever.
 
         mode: "hybrid" (both retrievers, default), "bm25" (BM25 only,
         skips the embedding call), or "vector" (vector KNN only).
+        agent_id: optional namespace scope (see _resolve_agent_scope).
         """
         fetch_k = n_results * 3
+        agent_ids = self._resolve_agent_scope(agent_id)
 
         bm25_rows: list[dict[str, Any]] = []
         if mode in ("hybrid", "bm25"):
             try:
-                bm25_rows = self.storage.search_bm25(query, vaults, fetch_k)
+                bm25_rows = self.storage.search_bm25(
+                    query, vaults, fetch_k, agent_ids=agent_ids
+                )
             except Exception as exc:
                 logger.warning("BM25 retrieval failed: %s", exc)
 
@@ -308,7 +327,9 @@ class BrainQueryEngine:
         if mode in ("hybrid", "vector"):
             try:
                 embedding = self.get_embedding(query)
-                vector_rows = self.storage.search_vectors(embedding, vaults, fetch_k)
+                vector_rows = self.storage.search_vectors(
+                    embedding, vaults, fetch_k, agent_ids=agent_ids
+                )
             except Exception as exc:
                 logger.warning("Vector retrieval failed: %s", exc)
 
@@ -333,12 +354,16 @@ class BrainQueryEngine:
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
         mode: str = "hybrid",
         vault_override: str | None = None,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve ranked, deduped (and optionally reranked) chunk rows.
 
         Structured counterpart to `query()` for callers (e.g. the eval
         harness) that need candidate rows rather than a formatted briefing.
         mode: "hybrid" (default), "bm25", or "vector" — see `_hybrid_retrieve`.
+        agent_id: optional namespace scope — None/"default" applies no
+        filtering; any other value scopes to that agent's data plus shared
+        ("default") content (see `_resolve_agent_scope`).
         """
         processed_query = self.query_preprocessor.preprocess(text)
         if processed_query != text and logger.isEnabledFor(logging.DEBUG):
@@ -351,7 +376,7 @@ class BrainQueryEngine:
             ]
 
         rows = self._hybrid_retrieve(
-            processed_query, fallback_chain, n_results, mode=mode
+            processed_query, fallback_chain, n_results, mode=mode, agent_id=agent_id
         )
         rows = self._dedupe_by_note(rows)
 
@@ -370,15 +395,18 @@ class BrainQueryEngine:
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
         vault_override: str | None = None,
         as_of: str | None = None,
+        agent_id: str | None = None,
     ) -> str:
         """as_of restricts graph expansion (when expand_graph=True) to
         relations valid at that timestamp; default (None) uses only
-        currently-valid relations. Chunk retrieval itself is untemporal."""
+        currently-valid relations. agent_id scopes chunk retrieval (see
+        `retrieve`); graph expansion is not agent-scoped."""
         rows = self.retrieve(
             text,
             n_results=n_results,
             use_rerank=use_rerank,
             vault_override=vault_override,
+            agent_id=agent_id,
         )
         return self.build_context(rows, expand_graph, as_of=as_of)
 

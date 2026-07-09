@@ -129,10 +129,15 @@ def _resolve_subject_entity(
     subject: str,
     provider: EmbeddingProvider,
     threshold: float,
+    agent_id: str,
 ) -> str:
-    """Return the canonical entity name for `subject` (existing or newly created)."""
+    """Return the canonical entity name for `subject` (existing or newly
+    created), scoped to agent_id so different agents' same-named subjects
+    (e.g. two agents each with their own "User" concept) don't collide."""
     embedding = provider.embed(subject)
-    hit = storage.find_similar_entity(vault, KIND_CONCEPT, embedding, threshold)
+    hit = storage.find_similar_entity(
+        vault, KIND_CONCEPT, embedding, threshold, agent_id=agent_id
+    )
     if hit:
         logger.debug(
             "write_memory: resolved subject '%s' -> existing '%s' (%.2f)",
@@ -141,7 +146,9 @@ def _resolve_subject_entity(
             hit["similarity"],
         )
         return hit["name"]
-    storage.upsert_typed_entity(vault, subject, KIND_CONCEPT, embedding=embedding)
+    storage.upsert_typed_entity(
+        vault, subject, KIND_CONCEPT, embedding=embedding, agent_id=agent_id
+    )
     return subject
 
 
@@ -238,10 +245,18 @@ def write_memory(
 
     threshold = float(Config.ENTITY_RESOLUTION_THRESHOLD)
     entity_name = _resolve_subject_entity(
-        storage, vault, normalized.subject, provider, threshold
+        storage, vault, normalized.subject, provider, threshold, agent_id
     )
 
-    note_path = f"{MEMORY_DIR}/{_slugify(entity_name)}.md"
+    # Default agent keeps the original flat path (backward compatible);
+    # non-default agents get their own subfolder so two agents resolving
+    # the same subject name don't collide on the same note file.
+    slug = _slugify(entity_name)
+    note_path = (
+        f"{MEMORY_DIR}/{slug}.md"
+        if agent_id == "default"
+        else f"{MEMORY_DIR}/{agent_id}/{slug}.md"
+    )
     absolute_path = writer.vault_root / note_path
     existing_content = (
         absolute_path.read_text(encoding="utf-8") if absolute_path.is_file() else None
@@ -271,7 +286,7 @@ def write_memory(
         _build_frontmatter(entity_name, agent_id, created, now) + "\n" + new_body
     )
     mode = "overwrite" if existing_content is not None else "create"
-    result = writer.write_note(note_path, note_content, mode=mode)
+    result = writer.write_note(note_path, note_content, mode=mode, agent_id=agent_id)
     if not result["success"]:
         return MemoryWriteResult(
             success=False, path=note_path, message=result["message"]

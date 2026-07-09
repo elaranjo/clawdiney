@@ -204,3 +204,65 @@ class TestNoWriteSideEffectsOnReadPath:
         engine.query("testing", expand_graph=False)
         engine.close()
         assert not (vault_root / MEMORY_DIR).exists()
+
+
+class TestAgentNamespacing:
+    def test_default_agent_note_path_unchanged(self, storage, writer):
+        result = write_memory(
+            "User prefers embedded SQLite over Docker-based stacks",
+            source="conversation",
+            storage=storage,
+            writer=writer,
+            provider=FakeProvider(),
+            agent_id="default",
+        )
+        assert result.path == f"{MEMORY_DIR}/User.md"
+
+    def test_non_default_agent_gets_own_subfolder(self, storage, writer):
+        result = write_memory(
+            "User prefers embedded SQLite over Docker-based stacks",
+            source="conversation",
+            storage=storage,
+            writer=writer,
+            provider=FakeProvider(),
+            agent_id="agent-a",
+        )
+        assert result.path == f"{MEMORY_DIR}/agent-a/User.md"
+
+    def test_two_agents_same_subject_do_not_collide(self, storage, writer):
+        result_a = write_memory(
+            "User prefers dark mode",
+            source="conversation",
+            storage=storage,
+            writer=writer,
+            provider=FakeProvider(),
+            agent_id="agent-a",
+        )
+        result_b = write_memory(
+            "User prefers light mode",
+            source="conversation",
+            storage=storage,
+            writer=writer,
+            provider=FakeProvider(),
+            agent_id="agent-b",
+        )
+
+        assert result_a.path != result_b.path
+        note_a = (writer.vault_root / result_a.path).read_text(encoding="utf-8")
+        note_b = (writer.vault_root / result_b.path).read_text(encoding="utf-8")
+        assert "dark mode" in note_a and "light mode" not in note_a
+        assert "light mode" in note_b and "dark mode" not in note_b
+
+    def test_agent_note_documents_row_carries_agent_id(self, storage, writer):
+        result = write_memory(
+            "User prefers embedded SQLite over Docker-based stacks",
+            source="conversation",
+            storage=storage,
+            writer=writer,
+            provider=FakeProvider(),
+            agent_id="agent-a",
+        )
+        row = storage.conn.execute(
+            "SELECT agent_id FROM documents WHERE path = ?", (result.path,)
+        ).fetchone()
+        assert row["agent_id"] == "agent-a"
