@@ -42,10 +42,6 @@ class CrossEncoderReranker:
                 return False
             try:
                 from sentence_transformers import CrossEncoder
-
-                logger.info("Loading cross-encoder model: %s", self.model_name)
-                self._model = CrossEncoder(self.model_name)
-                return True
             except ImportError:
                 logger.warning(
                     "sentence-transformers not installed; reranking disabled. "
@@ -53,14 +49,33 @@ class CrossEncoderReranker:
                 )
                 self._load_failed = True
                 return False
+
+            logger.info("Loading cross-encoder model: %s", self.model_name)
+            try:
+                self._model = CrossEncoder(self.model_name)
+                return True
             except Exception as exc:
+                # Common failure on small/shared GPUs: not enough VRAM for the
+                # default (CUDA) device. Retry once explicitly on CPU before
+                # giving up — the model is small enough to run there.
                 logger.warning(
-                    "Failed to load cross-encoder '%s': %s; reranking disabled",
+                    "Failed to load cross-encoder '%s' on default device: %s; "
+                    "retrying on CPU",
                     self.model_name,
                     exc,
                 )
-                self._load_failed = True
-                return False
+                try:
+                    self._model = CrossEncoder(self.model_name, device="cpu")
+                    return True
+                except Exception as cpu_exc:
+                    logger.warning(
+                        "Failed to load cross-encoder '%s' on CPU: %s; "
+                        "reranking disabled",
+                        self.model_name,
+                        cpu_exc,
+                    )
+                    self._load_failed = True
+                    return False
 
     def warm_up(self) -> bool:
         """Eagerly load the model (e.g., in a background thread at startup)."""
