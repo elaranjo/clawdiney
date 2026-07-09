@@ -81,11 +81,23 @@ def main() -> None:
     if not result.strip():
         return
 
-    print(
+    n_sources = result.count("--- Source")
+    context_text = (
         "[clawdiney: contexto recuperado proativamente para este prompt — "
-        "use search_brain/explore_graph/get_project_card para aprofundar]\n"
+        "use search_brain/explore_graph/get_project_card para aprofundar]\n\n"
+        + result
     )
-    print(result)
+    print(
+        json.dumps(
+            {
+                "systemMessage": f"🧠 clawdiney: {n_sources} fonte(s) injetada(s) no contexto",
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": context_text,
+                },
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
