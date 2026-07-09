@@ -54,6 +54,7 @@ Issues = "https://github.com/elaranjo/clawdiney/issues"
 clawdiney-index = "clawdiney.indexer:main"
 clawdiney-mcp = "clawdiney.mcp_server:main"
 clawdiney = "clawdiney.cli:main"
+clawdiney-eval = "clawdiney.eval.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
