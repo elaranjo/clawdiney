@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools_scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawdiney"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Hybrid Vector + Graph system for Obsidian vaults"
 readme = "README.md"
 license = {text = "MIT"}
@@ -59,6 +59,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 clawdiney = ["py.typed"]
+
+[tool.setuptools_scm]
+write_to = "src/clawdiney/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

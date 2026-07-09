@@ -4,7 +4,12 @@ Clawdiney - Hybrid Vector + Graph system for Obsidian vaults.
 Transforms an Obsidian Vault into a living knowledge source for AI coding agents.
 """
 
-__version__ = "0.2.0"
+try:
+    from clawdiney._version import __version__
+except ImportError:
+    # Editable install without a git checkout (e.g. sdist without .git) —
+    # setuptools_scm never generated _version.py.
+    __version__ = "0.0.0+unknown"
 
 # Public API exports
 from clawdiney.chunking import Chunk, chunk_text
