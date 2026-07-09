@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools_scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawdiney"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Hybrid Vector + Graph system for Obsidian vaults"
 readme = "README.md"
 license = {text = "MIT"}
@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "elaranjo", email = "elaranjo@users.noreply.github.com"}
 ]
+keywords = ["obsidian", "rag", "mcp", "knowledge-graph", "ai-agents", "claude"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -44,6 +45,11 @@ dev = [
     "requests>=2.31.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/elaranjo/clawdiney"
+Repository = "https://github.com/elaranjo/clawdiney"
+Issues = "https://github.com/elaranjo/clawdiney/issues"
+
 [project.scripts]
 clawdiney-index = "clawdiney.indexer:main"
 clawdiney-mcp = "clawdiney.mcp_server:main"
@@ -54,6 +60,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 clawdiney = ["py.typed"]
+
+[tool.setuptools_scm]
+write_to = "src/clawdiney/_version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
