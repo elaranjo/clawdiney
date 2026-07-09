@@ -1,61 +1,61 @@
-# Project Watcher - Auto-Sync para Obsidian
+# Project Watcher - Auto-Sync for Obsidian
 
-## Visão Geral
+## Overview
 
-O Project Watcher é um serviço que monitora automaticamente mudanças nos seus projetos e atualiza a documentação no Obsidian em tempo real.
+The Project Watcher is a service that automatically monitors changes in your projects and updates the Obsidian documentation in real time.
 
-## Por que usar?
+## Why use it?
 
-**Problema:** Durante o trabalho diário, é fácil esquecer de sincronizar manualmente as alterações do código com o Obsidian.
+**Problem:** During day-to-day work, it's easy to forget to manually sync code changes with Obsidian.
 
-**Solução:** O watcher roda em background e detecta automaticamente mudanças nos arquivos, reindexando projetos afetados após um debounce de 10 segundos.
+**Solution:** The watcher runs in the background and automatically detects file changes, reindexing affected projects after a 10-second debounce.
 
-## Instalação Rápida
+## Quick Install
 
-### Opção 1: Scripts de controle (Recomendado para desenvolvimento)
+### Option 1: Control scripts (recommended for development)
 
 ```bash
-# Iniciar o watcher
+# Start the watcher
 ./scripts/start_watcher.sh
 
-# Parar o watcher
+# Stop the watcher
 ./scripts/stop_watcher.sh
 
-# Ver logs em tempo real
+# View live logs
 tail -f logs/watcher.log
 ```
 
-### Opção 2: Serviço systemd (Produção / Auto-start)
+### Option 2: systemd service (production / auto-start)
 
 ```bash
-# Instalar serviço
+# Install the service
 sudo cp scripts/clawdiney-watcher.service /etc/systemd/system/
 
-# Habilitar e iniciar
+# Enable and start
 sudo systemctl daemon-reload
 sudo systemctl enable clawdiney-watcher
 sudo systemctl start clawdiney-watcher
 
-# Verificar status
+# Check status
 sudo systemctl status clawdiney-watcher
 
-# Ver logs via journalctl
+# View logs via journalctl
 journalctl -u clawdiney-watcher -f
 ```
 
-## Como Funciona
+## How It Works
 
-### Arquivos Monitorados
+### Watched Files
 
-O watcher detecta mudanças em arquivos com estas extensões:
-- `.py`, `.ts`, `.js`, `.tsx`, `.jsx` - Código
-- `.json`, `.toml`, `.yaml`, `.yml` - Configuração
-- `.md`, `.txt` - Documentação
-- `.sql`, `.prisma`, `.graphql` - Banco de dados
+The watcher detects changes in files with these extensions:
+- `.py`, `.ts`, `.js`, `.tsx`, `.jsx` - Code
+- `.json`, `.toml`, `.yaml`, `.yml` - Configuration
+- `.md`, `.txt` - Documentation
+- `.sql`, `.prisma`, `.graphql` - Database
 
-### Prioridade Alta
+### High Priority
 
-Estes arquivos sempre disparam reindexação imediata:
+These files always trigger immediate reindexing:
 - `package.json`
 - `pyproject.toml`
 - `setup.py`
@@ -65,97 +65,97 @@ Estes arquivos sempre disparam reindexação imediata:
 - `tsconfig.json`
 - `docker-compose.yml`
 
-### Diretórios Ignorados
+### Ignored Directories
 
-Estes diretórios são automaticamente ignorados:
+These directories are automatically ignored:
 - `__pycache__`, `.venv`, `venv`
 - `node_modules`
 - `.git`, `.github`
 - `dist`, `build`, `coverage`
 - `target`, `vendor`
-- Arquivos ocultos (`.hidden`)
+- Hidden files (`.hidden`)
 
 ### Debounce
 
-Mudanças rápidas são agrupadas:
-- **Debounce:** 10 segundos após a última mudança
-- **Batch:** Mudanças dentro de 2 segundos são tratadas como um lote
+Rapid changes are batched together:
+- **Debounce:** 10 seconds after the last change
+- **Batch:** Changes within 2 seconds are treated as a single batch
 
-## Exemplo de Uso
+## Usage Example
 
-1. **Inicie o watcher:**
+1. **Start the watcher:**
    ```bash
    ./scripts/start_watcher.sh
    ```
 
-2. **Trabalhe normalmente no seu código**
+2. **Work on your code as usual**
 
-3. **O watcher detecta e sincroniza automaticamente:**
+3. **The watcher detects and syncs automatically:**
    ```
-   2026-04-24 13:45:27 [INFO] 🔴 High-priority change in meu-projeto - will reindex soon
-   2026-04-24 13:45:37 [INFO] 🔄 Reindexing projects: meu-projeto
-   2026-04-24 13:45:40 [INFO] ✅ Updated: meu-projeto
+   2026-04-24 13:45:27 [INFO] 🔴 High-priority change in my-project - will reindex soon
+   2026-04-24 13:45:37 [INFO] 🔄 Reindexing projects: my-project
+   2026-04-24 13:45:40 [INFO] ✅ Updated: my-project
    ```
 
-4. **Verifique a documentação atualizada no Obsidian:**
-   - Arquivo: `00_Inbox/Projetos/meu-projeto.md`
+4. **Check the updated documentation in Obsidian:**
+   - File: `00_Inbox/Projects/my-project.md`
 
-## Configuração
+## Configuration
 
-### Mudar o diretório de projetos
+### Change the projects directory
 
-Edite `scripts/start_watcher.sh`:
+Edit `scripts/start_watcher.sh`:
 ```bash
-PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/Documentos/projetos}"
+PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/Documents/projects}"
 ```
 
-Ou defina a variável de ambiente:
+Or set the environment variable:
 ```bash
-export PROJECTS_ROOT=~/meus-projetos
+export PROJECTS_ROOT=~/my-projects
 ./scripts/start_watcher.sh
 ```
 
-### Mudar o diretório do Obsidian
+### Change the Obsidian directory
 
-Edite `scripts/clawdiney-watcher.service` ou passe via linha de comando:
+Edit `scripts/clawdiney-watcher.service` or pass it on the command line:
 ```bash
-./venv/bin/python3 -m clawdiney.scripts.watch_projects ~/projetos --vault ~/MeuObsidian
+./venv/bin/python3 -m clawdiney.scripts.watch_projects ~/projects --vault ~/MyObsidian
 ```
 
 ## Troubleshooting
 
-### Watcher não inicia
+### Watcher doesn't start
 
-Verifique se o virtual environment está ativo:
+Check that the virtual environment is active:
 ```bash
 ls -la venv/bin/python3
 ```
 
-### Logs mostram erros de caminho
+### Logs show path errors
 
-Verifique se os diretórios existem:
+Check that the directories exist:
 ```bash
-ls -la ~/Documentos/projetos
+ls -la ~/Documents/projects
 ls -la ~/Documents/ObsidianVault
 ```
 
-### Watcher consumindo muita CPU
+### Watcher using too much CPU
 
-Verifique se não está monitorando diretórios com muitas mudanças:
+Check that it isn't monitoring directories with heavy change activity:
 ```bash
 tail -f logs/watcher.log | grep "Change detected"
 ```
 
-Se necessário, adicione mais diretórios à lista `IGNORE_DIRS` em `src/clawdiney/scripts/watch_projects.py`.
+If needed, add more directories to the `IGNORE_DIRS` list in `src/clawdiney/scripts/watch_projects.py`.
 
-### Parar serviço systemd
+### Stop the systemd service
 
 ```bash
 sudo systemctl stop clawdiney-watcher
 sudo systemctl disable clawdiney-watcher
 ```
 
-## Arquitetura
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -169,27 +169,27 @@ sudo systemctl disable clawdiney-watcher
 │                                                 ▼          │
 │  Background Loop:                                      │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │  A cada 1 segundo:                               │    │
-│  │  1. Verifica projetos pendentes                  │    │
-│  │  2. Aplica debounce (10s)                        │    │
-│  │  3. Chama ProjectIndexer para reindexar          │    │
-│  │  4. Salva .md no Obsidian                        │    │
+│  │  Every 1 second:                                 │    │
+│  │  1. Check pending projects                       │    │
+│  │  2. Apply debounce (10s)                         │    │
+│  │  3. Call ProjectIndexer to reindex               │    │
+│  │  4. Save .md to Obsidian                         │    │
 │  └──────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Comandos Úteis
+## Useful Commands
 
 ```bash
-# Ver se está rodando
+# Check if it's running
 ps aux | grep watch_projects
 
-# Ver PID
+# View PID
 cat logs/watcher.pid
 
-# Restartar
+# Restart
 ./scripts/stop_watcher.sh && ./scripts/start_watcher.sh
 
-# Logs das últimas 100 linhas
+# Last 100 log lines
 tail -100 logs/watcher.log
 ```

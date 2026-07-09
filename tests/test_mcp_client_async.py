@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cliente simples para testar o servidor MCP do Clawdiney."""
+"""Simple client to test Clawdiney's MCP server."""
 
 import asyncio
 from unittest.mock import patch
@@ -60,72 +60,72 @@ def setup_mock_mcp():
 
 
 async def async_test_mcp_server():
-    """Testa o servidor MCP usando transporte SSE."""
+    """Test the MCP server over SSE transport."""
     try:
-        # Criar cliente SSE para conectar ao servidor
+        # Create an SSE client to connect to the server
         async with sse_client("http://localhost:8006/mcp") as (read, write):
             async with ClientSession(read, write) as session:
-                # Inicializar o servidor
-                print("🔧 Inicializando servidor MCP...")
+                # Initialize the server
+                print("🔧 Initializing MCP server...")
                 result = await session.initialize()
-                print(f"✅ Servidor inicializado: {result}")
+                print(f"✅ Server initialized: {result}")
 
-                # Testar a função search_brain
-                print("\n🔍 Testando função search_brain...")
+                # Test the search_brain function
+                print("\n🔍 Testing search_brain function...")
                 try:
                     result = await session.call_tool(
                         "search_brain", {"query": "architecture patterns"}
                     )
-                    print("✅ Função search_brain executada com sucesso!")
+                    print("✅ search_brain executed successfully!")
                     content = result.content
                     if len(content) > 500:
-                        content = content[:500] + "... (truncado)"
-                    print(f"Resultado: {content}")
+                        content = content[:500] + "... (truncated)"
+                    print(f"Result: {content}")
                 except Exception as e:
-                    print(f"❌ Erro na função search_brain: {e}")
+                    print(f"❌ Error in search_brain: {e}")
 
-                # Testar a função resolve_note
-                print("\n🔍 Testando função resolve_note...")
+                # Test the resolve_note function
+                print("\n🔍 Testing resolve_note function...")
                 try:
                     result = await session.call_tool("resolve_note", {"name": "design"})
-                    print("✅ Função resolve_note executada com sucesso!")
+                    print("✅ resolve_note executed successfully!")
                     content = result.content
-                    print(f"Resultado: {content}")
+                    print(f"Result: {content}")
                 except Exception as e:
-                    print(f"❌ Erro na função resolve_note: {e}")
+                    print(f"❌ Error in resolve_note: {e}")
 
-                # Testar a função explore_graph
-                print("\n🔍 Testando função explore_graph...")
+                # Test the explore_graph function
+                print("\n🔍 Testing explore_graph function...")
                 try:
                     result = await session.call_tool(
                         "explore_graph", {"note_name": "design"}
                     )
-                    print("✅ Função explore_graph executada com sucesso!")
+                    print("✅ explore_graph executed successfully!")
                     content = result.content
                     if len(content) > 500:
-                        content = content[:500] + "... (truncado)"
-                    print(f"Resultado: {content}")
+                        content = content[:500] + "... (truncated)"
+                    print(f"Result: {content}")
                 except Exception as e:
-                    print(f"❌ Erro na função explore_graph: {e}")
+                    print(f"❌ Error in explore_graph: {e}")
 
-                # Testar a função get_note_chunks
-                print("\n🔍 Testando função get_note_chunks...")
+                # Test the get_note_chunks function
+                print("\n🔍 Testing get_note_chunks function...")
                 try:
                     result = await session.call_tool(
                         "get_note_chunks", {"filename": "Agent_Protocol.md"}
                     )
-                    print("✅ Função get_note_chunks executada com sucesso!")
+                    print("✅ get_note_chunks executed successfully!")
                     content = result.content
                     if len(content) > 500:
-                        content = content[:500] + "... (truncado)"
-                    print(f"Resultado: {content}")
+                        content = content[:500] + "... (truncated)"
+                    print(f"Result: {content}")
                 except Exception as e:
-                    print(f"❌ Erro na função get_note_chunks: {e}")
+                    print(f"❌ Error in get_note_chunks: {e}")
 
         return True
 
     except Exception as e:
-        print(f"❌ Erro ao conectar ao servidor: {e}")
+        print(f"❌ Error connecting to server: {e}")
         return False
 
 

@@ -529,23 +529,23 @@ class ProjectIndexer:
         if project.stack or project.language:
             sections.append("## Stack\n")
             if project.language:
-                sections.append(f"- **Linguagem:** {project.language}")
+                sections.append(f"- **Language:** {project.language}")
             if project.version:
-                sections.append(f"- **Versão:** {project.version}")
+                sections.append(f"- **Version:** {project.version}")
             if project.stack:
                 sections.append(f"- **Frameworks:** {', '.join(project.stack)}")
             sections.append("")
 
         # Structure
         if project.structure:
-            sections.append("## Estrutura\n")
+            sections.append("## Structure\n")
             sections.append("```")
             sections.append("\n".join(project.structure))
             sections.append("```\n")
 
         # Scripts/Commands
         if project.scripts:
-            sections.append("## Comandos Principais\n")
+            sections.append("## Main Commands\n")
             sections.append("```bash")
             for name, command in project.scripts.items():
                 sections.append(f"# {name}")
@@ -555,16 +555,16 @@ class ProjectIndexer:
 
         # Dependencies
         if project.dependencies:
-            sections.append("## Dependências\n")
+            sections.append("## Dependencies\n")
             for dep in project.dependencies[:15]:  # Limit to 15
                 sections.append(f"- {dep}")
             if len(project.dependencies) > 15:
-                sections.append(f"- ... e mais {len(project.dependencies) - 15}")
+                sections.append(f"- ... and {len(project.dependencies) - 15} more")
             sections.append("")
 
         # Entry points
         if project.entry_points:
-            sections.append("## Arquivos-Chave\n")
+            sections.append("## Key Files\n")
             for entry in project.entry_points:
                 sections.append(f"- `{entry}` - Entry point")
             sections.append("")
@@ -585,7 +585,7 @@ class ProjectIndexer:
 
         # Footer
         sections.append("---")
-        sections.append(f"*Gerado em: {project.generated_at}*")
+        sections.append(f"*Generated at: {project.generated_at}*")
         sections.append(f"*Caminho: {project.path}*")
 
         return "\n".join(sections)

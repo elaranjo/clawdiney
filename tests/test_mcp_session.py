@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Script para testar a conexão com o servidor MCP do Clawdiney usando sessão persistente."""
+"""Script to test the connection to Clawdiney's MCP server using a persistent session."""
 
 import json
 
@@ -16,29 +16,29 @@ class MCPClient:
         self.session_id = None
 
     def _send_request(self, data):
-        """Envia uma requisição para o servidor MCP e retorna a resposta."""
+        """Send a request to the MCP server and return the response."""
         try:
             response = requests.post(
                 self.base_url, headers=self.headers, json=data, stream=True
             )
-            # Ler a resposta
+            # Read the response
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode("utf-8")
                     if decoded_line.startswith("data: "):
-                        json_data = decoded_line[6:]  # Remover o prefixo 'data: '
+                        json_data = decoded_line[6:]  # Strip the 'data: ' prefix
                         try:
                             result = json.loads(json_data)
                             return result
                         except json.JSONDecodeError:
-                            print(f"Dados recebidos: {json_data}")
+                            print(f"Data received: {json_data}")
         except Exception as e:
-            print(f"❌ Erro ao conectar ao servidor: {e}")
+            print(f"❌ Error connecting to server: {e}")
             return None
 
     def initialize(self):
-        """Inicializa a sessão com o servidor MCP."""
-        print("🔧 Inicializando sessão com servidor MCP...")
+        """Initialize the session with the MCP server."""
+        print("🔧 Initializing session with MCP server...")
         init_data = {
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -52,37 +52,37 @@ class MCPClient:
 
         result = self._send_request(init_data)
         if result and "result" in result:
-            print("✅ Sessão inicializada com sucesso!")
+            print("✅ Session initialized successfully!")
             server_info = result["result"].get("serverInfo", {})
-            print(f"Informações do servidor: {server_info}")
+            print(f"Server info: {server_info}")
             return True
         else:
             print(
-                f"❌ Falha na inicialização: {result.get('error', 'Erro desconhecido') if result else 'Sem resposta'}"
+                f"❌ Initialization failed: {result.get('error', 'Unknown error') if result else 'No response'}"
             )
             return False
 
     def initialized(self):
-        """Envia notificação de inicialização concluída."""
-        print("📡 Enviando notificação de inicialização concluída...")
+        """Send the initialized notification."""
+        print("📡 Sending initialized notification...")
         initialized_data = {
             "jsonrpc": "2.0",
             "method": "initialized",
             "params": {},
-            "id": None,  # Notificação, não requisição
+            "id": None,  # Notification, not a request
         }
 
         try:
             requests.post(self.base_url, headers=self.headers, json=initialized_data)
-            print("✅ Notificação de inicialização enviada!")
+            print("✅ Initialized notification sent!")
             return True
         except Exception as e:
-            print(f"⚠️ Erro ao enviar notificação: {e}")
+            print(f"⚠️ Error sending notification: {e}")
             return False
 
     def call_tool(self, tool_name, arguments, request_id):
-        """Chama uma ferramenta no servidor MCP."""
-        print(f"🔨 Chamando ferramenta: {tool_name}")
+        """Call a tool on the MCP server."""
+        print(f"🔨 Calling tool: {tool_name}")
         tool_data = {
             "jsonrpc": "2.0",
             "method": "call_tool",
@@ -92,56 +92,56 @@ class MCPClient:
 
         result = self._send_request(tool_data)
         if result and "result" in result:
-            print(f"✅ Ferramenta {tool_name} executada com sucesso!")
+            print(f"✅ Tool {tool_name} executed successfully!")
             return result["result"]
         elif result and "error" in result:
-            print(f"❌ Erro na ferramenta {tool_name}: {result['error']}")
+            print(f"❌ Error in tool {tool_name}: {result['error']}")
             return None
         else:
-            print(f"❌ Falha ao executar {tool_name}")
+            print(f"❌ Failed to run {tool_name}")
             return None
 
 
 def main():
-    """Função principal para testar o cliente MCP."""
+    """Main entry point to test the MCP client."""
     client = MCPClient("http://localhost:8006/mcp")
 
-    # Etapa 1: Inicializar sessão
+    # Step 1: Initialize the session
     if not client.initialize():
         return
 
-    # Etapa 2: Enviar notificação de inicialização concluída
+    # Step 2: Send the initialized notification
     client.initialized()
 
-    # Etapa 3: Testar a função search_brain
+    # Step 3: Test the search_brain function
     result = client.call_tool("search_brain", {"query": "architecture patterns"}, 2)
     if result:
         content = result.get("content", "")
         if len(content) > 500:
-            content = content[:500] + "... (truncado)"
-        print(f"Resultado da busca: {content}")
+            content = content[:500] + "... (truncated)"
+        print(f"Search result: {content}")
 
-    # Etapa 4: Testar a função resolve_note
+    # Step 4: Test the resolve_note function
     result = client.call_tool("resolve_note", {"name": "design"}, 3)
     if result:
         content = result.get("content", "")
-        print(f"Resultado do resolve_note: {content}")
+        print(f"resolve_note result: {content}")
 
-    # Etapa 5: Testar a função explore_graph
+    # Step 5: Test the explore_graph function
     result = client.call_tool("explore_graph", {"note_name": "design"}, 4)
     if result:
         content = result.get("content", "")
-        print(f"Resultado do explore_graph: {content}")
+        print(f"explore_graph result: {content}")
 
-    # Etapa 6: Testar a função get_note_chunks
+    # Step 6: Test the get_note_chunks function
     result = client.call_tool("get_note_chunks", {"filename": "Agent_Protocol.md"}, 5)
     if result:
         content = result.get("content", "")
         if len(content) > 500:
-            content = content[:500] + "... (truncado)"
-        print(f"Resultado do get_note_chunks: {content}")
+            content = content[:500] + "... (truncated)"
+        print(f"get_note_chunks result: {content}")
 
-    print("\n✅ Todos os testes concluídos!")
+    print("\n✅ All tests completed!")
 
 
 if __name__ == "__main__":

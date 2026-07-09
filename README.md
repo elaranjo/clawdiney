@@ -109,9 +109,9 @@ Clawdiney discovers vaults by scanning subdirectories in `VAULTS_DIR` (default: 
 Each vault requires a minimal config file:
 
 ```toml
-id = "Budget"
-name = "Budget"
-description = "Projeto: Budget"
+id = "Payments"
+name = "Payments"
+description = "Payments service"
 linked_vaults = ["general"]
 ```
 
@@ -120,7 +120,7 @@ linked_vaults = ["general"]
 | `id` | Unique vault identifier (matched against directory names for CWD detection) |
 | `name` | Display name |
 | `description` | Optional description |
-| `linked_vaults` | Vault IDs for fallback search (e.g., SDK → parent project) |
+| `linked_vaults` | Vault IDs for fallback search (e.g., a client SDK linked to the service it wraps) |
 
 ### CWD Auto-Detection (Convention > Configuration)
 
@@ -128,9 +128,9 @@ When you call any MCP tool without specifying `vault=`, Clawdiney inspects your 
 
 | Your CWD | Detected Vault |
 |---|---|
-| `~/projetos/Budget/` | `Budget` |
-| `~/projetos/OnflyApi/src/` | `OnflyApi` |
-| `~/projetos/Budget-SDK/` | `Budget-SDK` |
+| `~/projetos/Payments/` | `Payments` |
+| `~/projetos/MyCompanyApi/src/` | `MyCompanyApi` |
+| `~/projetos/Payments-SDK/` | `Payments-SDK` |
 | `/any/other/directory` | `general` (fallback) |
 
 ### Linking & Fallback Chain
@@ -138,11 +138,11 @@ When you call any MCP tool without specifying `vault=`, Clawdiney inspects your 
 Vaults can link to related vaults for broader search results:
 
 ```
-Budget-SDK ──linked_to──► [general, Budget]
-                                │
-User-SDK  ──linked_to──► [general, User]
-                                │
-clawdiney ──linked_to──► []   (isolated — no fallback)
+Payments-SDK ──linked_to──► [general, Payments]
+                                  │
+Auth-SDK     ──linked_to──► [general, Auth]
+                                  │
+clawdiney    ──linked_to──► []   (isolated — no fallback)
 ```
 
 When searching, Clawdiney queries: **current vault → linked vaults (in order) → general**. Results from all sources are merged and deduplicated.
@@ -327,7 +327,7 @@ If MCP is not available, use the direct script:
 ┌─────────────────────────────────────────────────────────┐
 │              VAULTS_DIR (~/clawdiney-vaults/)            │
 │                                                         │
-│  general/ (Onfly ecosystem)  clawdiney/ (this project)  │
+│  general/ (personal vault)   clawdiney/ (this project)  │
 │  Each vault has: clawdiney.toml + P.A.R.A. structure    │
 └─────────────────────────────────────────────────────────┘
 ```
