@@ -10,14 +10,14 @@
 
 ## 2. Memory auto-write
 
-- [ ] 2.1 Decide and document vault location/frontmatter convention for agent-written memory (resolves design.md open question)
-- [ ] 2.2 Implement fact normalization step (parse natural-language fact into subject/predicate/value)
-- [ ] 2.3 Wire normalization into existing entity-resolution threshold for subject matching
-- [ ] 2.4 Implement dedupe-or-update logic against existing note sections/entities
-- [ ] 2.5 Implement minimum-confidence gate with rejection response
-- [ ] 2.6 Add `write_memory(fact, source, agent_id?)` MCP tool wired to `vault_writer`
-- [ ] 2.7 Add tests: explicit write, duplicate write, low-confidence rejection, no side effects on read-path tools
-- [ ] 2.8 Re-run eval harness to confirm no regression on read paths
+- [x] 2.1 Decide and document vault location/frontmatter convention for agent-written memory (resolves design.md open question)
+- [x] 2.2 Implement fact normalization step (parse natural-language fact into subject/predicate/value)
+- [x] 2.3 Wire normalization into existing entity-resolution threshold for subject matching
+- [x] 2.4 Implement dedupe-or-update logic against existing note sections/entities
+- [x] 2.5 Implement minimum-confidence gate with rejection response
+- [x] 2.6 Add `write_memory(fact, source, agent_id?)` MCP tool wired to `vault_writer`
+- [x] 2.7 Add tests: explicit write, duplicate write, low-confidence rejection, no side effects on read-path tools
+- [x] 2.8 Re-run eval harness to confirm no regression on read paths
 
 ## 3. Temporal facts
 
