@@ -168,6 +168,9 @@ class Config:
         os.getenv("ENTITY_RESOLUTION_THRESHOLD", "0.85")
     )
 
+    # Memory auto-write (write_memory MCP tool)
+    MEMORY_MIN_CONFIDENCE = float(os.getenv("MEMORY_MIN_CONFIDENCE", "0.3"))
+
     @classmethod
     def validate_ollama_models(cls) -> list[str]:
         """

@@ -548,6 +548,59 @@ def add_learning(
 
 
 @mcp.tool()
+def write_memory(
+    fact: str, source: str, agent_id: str = "default", vault: str = None
+) -> str:
+    """
+    Persist a natural-language fact as agent-written memory. This is the
+    only tool that turns conversation/agent knowledge into vault content —
+    search_brain/explore_graph never write as a side effect of reading.
+
+    The fact's subject is resolved against existing entities (same
+    similarity threshold as the project knowledge graph) and written to a
+    dedicated `40_Memory/<subject>.md` note, one bullet per predicate.
+    Facts below the minimum confidence (MEMORY_MIN_CONFIDENCE) are rejected
+    rather than written.
+
+    Args:
+        fact: Natural-language fact, ideally "<Subject> <verb> <value>"
+            (e.g. "User prefers embedded SQLite over Docker-based stacks")
+        source: Short label for where the fact came from (e.g. "conversation")
+        agent_id: Optional identifier for the agent recording the fact
+        vault: Optional vault name (auto-detected from current directory, falls back to default)
+
+    Examples:
+        write_memory("User prefers embedded SQLite over Docker-based stacks", source="conversation")
+        write_memory("Clawdiney uses bge-m3 for embeddings", source="codebase-analysis")
+    """
+    try:
+        from .memory_writer import write_memory as _write_memory
+        from .vault_writer import get_writer
+
+        engine = get_engine(vault=vault)
+        writer = get_writer(vault_name=engine.current_vault)
+        result = _write_memory(
+            fact,
+            source,
+            storage=engine.storage,
+            writer=writer,
+            provider=engine.provider,
+            vault=engine.current_vault,
+            agent_id=agent_id,
+        )
+
+        if not result.success:
+            return f"Error: {result.message}"
+        return (
+            f"{result.message}: subject='{result.subject}', "
+            f"predicate='{result.predicate}' -> {result.path}"
+        )
+    except Exception as e:
+        logger.error(f"write_memory failed: {e}")
+        return f"Error in write_memory: {str(e)}"
+
+
+@mcp.tool()
 def delete_note(path: str, vault: str = None) -> str:
     """
     Delete a note from the vault and remove it from the index.
