@@ -43,12 +43,12 @@
 
 ## 5. Agent namespacing
 
-- [ ] 5.1 Add `agent_id TEXT NOT NULL DEFAULT 'default'` to `documents`, `entities`, and write-path tables, additive migration
-- [ ] 5.2 Update indexer/incremental_indexer to stamp `agent_id="default"` on vault-derived rows
-- [ ] 5.3 Add optional `agent_id` parameter (default `"default"`) to `search_brain`, `explore_graph`, `resolve_note`, `get_note_chunks`, `get_project_card`, `write_memory`
-- [ ] 5.4 Add explicit cross-namespace opt-in (`agent_id="*"` or list) to `how_do_projects_relate`
-- [ ] 5.5 Add tests: default-namespace parity with pre-change behavior, cross-agent isolation, explicit cross-agent query
-- [ ] 5.6 Re-run eval harness scoped to `"default"` agent to confirm parity
+- [x] 5.1 Add `agent_id TEXT NOT NULL DEFAULT 'default'` to `documents` and `entities`, additive migration (schema v5). `entities`' UNIQUE widened to `(vault, agent_id, name, kind)` (table rebuild, same technique as v2->v3) so same-named entities across agents don't collide; `documents` needed only a plain `ADD COLUMN` (its `(vault, path)` uniqueness is about physical files, not agents)
+- [x] 5.2 Thread `agent_id` through `indexer.index_note` → `IncrementalIndexer.sync_file` → `VaultWriter.write_note`, defaulting to `"default"` at every layer so ordinary vault indexing is unaffected
+- [x] 5.3 Add optional `agent_id` parameter to `search_brain`, `explore_graph`, `write_memory` (already had it from group 2, now actually scopes entity resolution + note path). **Scope adjustment**: `resolve_note`, `get_note_chunks`, `get_project_card` resolve notes by globbing the filesystem (`vault_root.rglob`), not by querying `documents`/`entities` — there is no agent_id to filter by in that code path, so adding the parameter there would be a no-op. Left unchanged rather than adding a misleading param
+- [x] 5.4 Add explicit cross-namespace opt-in (`agent_id="*"` default, or a concrete agent id) to `how_do_projects_relate` via `storage.find_paths(..., agent_ids=...)`. Currently a no-op in practice — project/dependency entities aren't agent-scoped by this implementation (they come from the shared project-indexer pipeline) — but the parameter is wired through `find_paths`/`_load_edges` for when agent-scoped project data exists
+- [x] 5.5 Add tests: default-namespace parity, cross-agent isolation, explicit cross-agent query — at the storage layer (`TestAgentNamespacing` in `test_storage.py`), the memory-write layer (`TestAgentNamespacing` in `test_memory_writer.py`), and the query-engine layer (`TestAgentScopedQuery` in `test_hybrid_search.py`)
+- [x] 5.6 Re-run eval harness (no `agent_id` passed → unfiltered `"default"` path) to confirm parity with baseline
 
 ## 6. Configurable reranker
 

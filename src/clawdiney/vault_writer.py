@@ -87,7 +87,13 @@ class VaultWriter:
             Path(temp_path).unlink(missing_ok=True)
             raise
 
-    def write_note(self, path: str, content: str, mode: str = "create") -> WriteResult:
+    def write_note(
+        self,
+        path: str,
+        content: str,
+        mode: str = "create",
+        agent_id: str = "default",
+    ) -> WriteResult:
         """
         Create or update a note in the vault.
 
@@ -95,6 +101,8 @@ class VaultWriter:
             path: Vault-relative path (e.g., "30_Resources/SOPs/SOP_New.md")
             content: Markdown content
             mode: "create" (fail if exists), "overwrite" (replace), "append" (add to end)
+            agent_id: owning namespace for the indexed document (see
+                BrainStorage.upsert_note); defaults to "default"
 
         Returns:
             WriteResult with success status and metadata
@@ -123,7 +131,9 @@ class VaultWriter:
             # Re-index
             relative_path = absolute_path.relative_to(self.vault_root).as_posix()
             try:
-                chunks_indexed = self.indexer.sync_file(relative_path)
+                chunks_indexed = self.indexer.sync_file(
+                    relative_path, agent_id=agent_id
+                )
                 return WriteResult(
                     success=True,
                     path=path,

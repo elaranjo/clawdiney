@@ -139,3 +139,45 @@ class TestEngineQuery:
         eng, _ = engine
         for hostile in ('"unbalanced', "a NEAR/3 b", "wild*card", "((("):
             eng.query(hostile, n_results=2, expand_graph=False)  # must not raise
+
+
+class TestAgentScopedQuery:
+    def test_default_agent_matches_no_agent_param(self, engine):
+        eng, _ = engine
+        with_default = eng.query(
+            "zorbulator", n_results=2, expand_graph=False, agent_id="default"
+        )
+        without_param = eng.query("zorbulator", n_results=2, expand_graph=False)
+        assert with_default == without_param
+
+    def test_cross_agent_isolation(self, engine):
+        eng, storage = engine
+        storage.upsert_note(
+            vault="default",
+            path="40_Memory/agent-a/secret.md",
+            content_hash="h",
+            updated_at="now",
+            chunks=[{"header": "", "content": "zorbulator agent-a private note"}],
+            embeddings=[[50.0, 25.0, 16.6, 12.5]],
+            wikilinks=[],
+            tags=[],
+            agent_id="agent-a",
+        )
+        seen_by_b = eng.query(
+            "zorbulator", n_results=5, expand_graph=False, agent_id="agent-b"
+        )
+        assert "40_Memory/agent-a/secret.md" not in seen_by_b
+
+        seen_by_a = eng.query(
+            "zorbulator", n_results=5, expand_graph=False, agent_id="agent-a"
+        )
+        assert "40_Memory/agent-a/secret.md" in seen_by_a
+        # agent-a still sees shared/default content too
+        assert "exact.md" in seen_by_a
+
+    def test_explicit_agent_query_still_returns_shared_content(self, engine):
+        eng, _ = engine
+        result = eng.query(
+            "zorbulator", n_results=5, expand_graph=False, agent_id="agent-b"
+        )
+        assert "exact.md" in result

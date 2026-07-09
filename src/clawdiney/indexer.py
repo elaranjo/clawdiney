@@ -97,6 +97,7 @@ def index_note(
     provider: EmbeddingProvider,
     note_record: NoteRecord,
     vault_name: str = "default",
+    agent_id: str = "default",
 ) -> int:
     """Embed and persist one note atomically. Returns chunks indexed."""
     documents = build_chunk_documents(note_record)
@@ -115,6 +116,7 @@ def index_note(
         wikilinks=note_record["wikilinks"],
         tags=note_record["tags"],
         name=note_record["name"],
+        agent_id=agent_id,
     )
 
 

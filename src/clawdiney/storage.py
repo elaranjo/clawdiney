@@ -26,7 +26,9 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+DEFAULT_AGENT_ID = "default"
 
 # Graph relation types
 REL_LINKS_TO = "LINKS_TO"
@@ -169,6 +171,9 @@ class BrainStorage:
                 if version < 4:
                     self._migrate_v3_to_v4(conn)
                     version = 4
+                if version < 5:
+                    self._migrate_v4_to_v5(conn)
+                    version = 5
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
         """Additive migration: entity_vectors table for entity resolution."""
@@ -268,6 +273,69 @@ class BrainStorage:
             conn.execute("PRAGMA user_version = 4")
         logger.info("Migrated brain.db schema v3 -> v4 (is_conflict)")
 
+    def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
+        """
+        Agent namespacing: agent_id on documents and entities, defaulting
+        to 'default' for all existing rows — single-agent installs are
+        unaffected since everything already lands in 'default'.
+
+        entities' UNIQUE constraint widens from (vault, name, kind) to
+        (vault, agent_id, name, kind) so different agents can have
+        same-named entities (e.g. two agents each with their own "User"
+        concept) without colliding — the constraint can't be altered in
+        place in SQLite, hence the rebuild (mirrors the v2->v3 relations
+        rebuild). `id` values are preserved so relations' foreign keys
+        stay valid.
+        """
+        conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            with conn:
+                doc_cols = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(documents)")
+                }
+                if "agent_id" not in doc_cols:
+                    conn.execute(
+                        "ALTER TABLE documents ADD COLUMN agent_id TEXT "
+                        f"NOT NULL DEFAULT '{DEFAULT_AGENT_ID}'"
+                    )
+
+                ent_cols = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(entities)")
+                }
+                if "agent_id" not in ent_cols:
+                    conn.execute(
+                        f"""
+                        CREATE TABLE entities_new (
+                            id INTEGER PRIMARY KEY,
+                            vault TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            kind TEXT NOT NULL,
+                            path TEXT,
+                            description TEXT,
+                            valid_at TEXT,
+                            invalidated_at TEXT,
+                            is_conflict INTEGER NOT NULL DEFAULT 0,
+                            agent_id TEXT NOT NULL DEFAULT '{DEFAULT_AGENT_ID}',
+                            UNIQUE(vault, agent_id, name, kind)
+                        )
+                        """
+                    )
+                    conn.execute(
+                        "INSERT INTO entities_new (id, vault, name, kind, path, "
+                        "description, valid_at, invalidated_at, is_conflict, agent_id) "
+                        "SELECT id, vault, name, kind, path, description, valid_at, "
+                        f"invalidated_at, is_conflict, '{DEFAULT_AGENT_ID}' FROM entities"
+                    )
+                    conn.execute("DROP TABLE entities")
+                    conn.execute("ALTER TABLE entities_new RENAME TO entities")
+                    conn.execute(
+                        "CREATE INDEX idx_entities_path ON entities(vault, path)"
+                    )
+                conn.execute("PRAGMA user_version = 5")
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
+        logger.info("Migrated brain.db schema v4 -> v5 (agent namespacing)")
+
     def _validate_meta(self) -> None:
         stored_model = self._get_meta("embedding_model")
         stored_dim = self._get_meta("embedding_dimension")
@@ -288,6 +356,7 @@ CREATE TABLE documents (
     path TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '{DEFAULT_AGENT_ID}',
     UNIQUE(vault, path)
 );
 
@@ -336,7 +405,8 @@ CREATE TABLE entities (
     valid_at TEXT,
     invalidated_at TEXT,
     is_conflict INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(vault, name, kind)
+    agent_id TEXT NOT NULL DEFAULT '{DEFAULT_AGENT_ID}',
+    UNIQUE(vault, agent_id, name, kind)
 );
 CREATE INDEX idx_entities_path ON entities(vault, path);
 
@@ -379,6 +449,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         wikilinks: list[str],
         tags: list[str],
         name: str | None = None,
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> int:
         """
         Atomically replace a note's chunks, vectors, FTS entries, and graph
@@ -386,6 +457,9 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
         chunks: list of {"header": str, "content": str} in order.
         embeddings: one vector per chunk, same order.
+        agent_id: owning namespace for this document and its own graph
+        entity. WikiLink targets/tags discovered in it stay DEFAULT_AGENT_ID
+        (shared taxonomy) regardless of who wrote the note.
         """
         if len(chunks) != len(embeddings):
             raise ValueError(
@@ -396,12 +470,13 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         with conn:
             self._delete_note_rows(conn, vault, path, keep_entity=True)
             cur = conn.execute(
-                "INSERT INTO documents (vault, path, content_hash, updated_at) "
-                "VALUES (?, ?, ?, ?) "
+                "INSERT INTO documents (vault, path, content_hash, updated_at, agent_id) "
+                "VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT(vault, path) DO UPDATE SET "
-                "content_hash = excluded.content_hash, updated_at = excluded.updated_at "
+                "content_hash = excluded.content_hash, updated_at = excluded.updated_at, "
+                "agent_id = excluded.agent_id "
                 "RETURNING id",
-                (vault, path, content_hash, updated_at),
+                (vault, path, content_hash, updated_at, agent_id),
             )
             document_id = cur.fetchone()["id"]
 
@@ -418,7 +493,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
             self._adopt_dangling_entity(conn, vault, note_name, path)
             source_id = self._upsert_entity(
-                conn, vault, note_name, KIND_NOTE, path=path
+                conn, vault, note_name, KIND_NOTE, path=path, agent_id=agent_id
             )
             self._replace_note_relations(conn, vault, source_id, wikilinks, tags)
         return len(chunks)
@@ -474,20 +549,23 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         kind: str,
         path: str | None = None,
         description: str | None = None,
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> int:
-        """Get-or-create an entity row. On conflict, only path/description
-        refresh — valid_at is set once, at first creation, and never touched
-        by this refresh path (an entity's identity isn't "superseded" the
-        way a relation's asserted fact can be)."""
+        """Get-or-create an entity row, scoped by (vault, agent_id, name,
+        kind) — different agents can have same-named entities without
+        colliding. On conflict, only path/description refresh — valid_at is
+        set once, at first creation, and never touched by this refresh path
+        (an entity's identity isn't "superseded" the way a relation's
+        asserted fact can be)."""
         now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
-            "INSERT INTO entities (vault, name, kind, path, description, valid_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(vault, name, kind) DO UPDATE SET "
+            "INSERT INTO entities (vault, name, kind, path, description, valid_at, agent_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(vault, agent_id, name, kind) DO UPDATE SET "
             "path = COALESCE(excluded.path, entities.path), "
             "description = COALESCE(excluded.description, entities.description) "
             "RETURNING id",
-            (vault, name, kind, path, description, now),
+            (vault, name, kind, path, description, now, agent_id),
         )
         return cur.fetchone()["id"]
 
@@ -584,13 +662,26 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
     # ------------------------------------------------------------------
 
     def search_bm25(
-        self, query: str, vaults: list[str], k: int
+        self,
+        query: str,
+        vaults: list[str],
+        k: int,
+        agent_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """BM25 search via FTS5. Returns ranked chunk rows (best first)."""
+        """BM25 search via FTS5. Returns ranked chunk rows (best first).
+        agent_ids, when given, restricts to documents owned by one of those
+        namespaces; None (default) applies no agent filtering."""
         fts_query = sanitize_fts_query(query)
         if not fts_query or not vaults:
             return []
         placeholders = ",".join("?" * len(vaults))
+        agent_clause = ""
+        params: list[Any] = [fts_query, *vaults]
+        if agent_ids:
+            agent_placeholders = ",".join("?" * len(agent_ids))
+            agent_clause = f" AND d.agent_id IN ({agent_placeholders})"
+            params.extend(agent_ids)
+        params.append(k)
         try:
             rows = self.conn.execute(
                 f"""
@@ -599,11 +690,11 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                 FROM chunk_fts
                 JOIN chunks c ON c.id = chunk_fts.rowid
                 JOIN documents d ON d.id = c.document_id
-                WHERE chunk_fts MATCH ? AND d.vault IN ({placeholders})
+                WHERE chunk_fts MATCH ? AND d.vault IN ({placeholders}){agent_clause}
                 ORDER BY score
                 LIMIT ?
                 """,
-                (fts_query, *vaults, k),
+                params,
             ).fetchall()
         except sqlite3.OperationalError as exc:
             logger.warning("FTS query failed (%s); returning no BM25 results", exc)
@@ -611,12 +702,24 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         return [dict(row) for row in rows]
 
     def search_vectors(
-        self, embedding: list[float], vaults: list[str], k: int
+        self,
+        embedding: list[float],
+        vaults: list[str],
+        k: int,
+        agent_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """KNN search via sqlite-vec. Returns ranked chunk rows (best first)."""
+        """KNN search via sqlite-vec. Returns ranked chunk rows (best first).
+        agent_ids, when given, restricts to documents owned by one of those
+        namespaces; None (default) applies no agent filtering."""
         if not vaults:
             return []
         placeholders = ",".join("?" * len(vaults))
+        agent_clause = ""
+        params: list[Any] = [serialize_f32(embedding), k, *vaults]
+        if agent_ids:
+            agent_placeholders = ",".join("?" * len(agent_ids))
+            agent_clause = f" AND d.agent_id IN ({agent_placeholders})"
+            params.extend(agent_ids)
         rows = self.conn.execute(
             f"""
             SELECT c.id AS chunk_id, c.content, c.header, c.chunk_index,
@@ -627,10 +730,10 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             ) v
             JOIN chunks c ON c.id = v.chunk_id
             JOIN documents d ON d.id = c.document_id
-            WHERE d.vault IN ({placeholders})
+            WHERE d.vault IN ({placeholders}){agent_clause}
             ORDER BY v.distance
             """,
-            (serialize_f32(embedding), k, *vaults),
+            params,
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -702,21 +805,33 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         ).fetchone()
         return row["id"] if row else None
 
-    def _load_edges(self, vault: str, as_of: str | None = None) -> list[dict[str, Any]]:
+    def _load_edges(
+        self,
+        vault: str,
+        as_of: str | None = None,
+        agent_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """All relations between entities of a vault (undirected traversal
         input). as_of restricts to relations valid at that timestamp;
-        default (None) considers only currently-valid relations."""
+        default (None) considers only currently-valid relations. agent_ids,
+        when given, restricts to relations whose source entity belongs to
+        one of those namespaces; None (default) applies no agent filtering."""
         cond = self._temporal_condition("r", as_of)
         params: dict[str, Any] = {"vault": vault}
         if as_of is not None:
             params["as_of"] = as_of
+        agent_clause = ""
+        if agent_ids:
+            agent_placeholders = ",".join(f":agent{i}" for i in range(len(agent_ids)))
+            agent_clause = f" AND s.agent_id IN ({agent_placeholders})"
+            params.update({f"agent{i}": aid for i, aid in enumerate(agent_ids)})
         rows = self.conn.execute(
             f"""
             SELECT r.id, r.source_id, r.target_id, r.rel_type, r.confidence,
                    r.evidence_chunk_id
             FROM relations r
             JOIN entities s ON s.id = r.source_id
-            WHERE s.vault = :vault AND {cond}
+            WHERE s.vault = :vault AND {cond}{agent_clause}
             """,
             params,
         ).fetchall()
@@ -743,7 +858,12 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         return row["path"] if row else None
 
     def expand_neighborhood(
-        self, entity_name: str, vault: str, depth: int = 1, as_of: str | None = None
+        self,
+        entity_name: str,
+        vault: str,
+        depth: int = 1,
+        as_of: str | None = None,
+        agent_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Multi-hop neighborhood expansion (undirected BFS).
@@ -751,6 +871,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         at minimum distance, each entity once. Depth clamped to
         MAX_TRAVERSAL_DEPTH. as_of restricts traversal to relations valid at
         that timestamp; default (None) considers only currently-valid ones.
+        agent_ids, when given, restricts traversal to relations sourced from
+        one of those namespaces; None (default) applies no agent filtering.
         """
         depth = max(1, min(depth, MAX_TRAVERSAL_DEPTH))
         start = self._find_entity_id(vault, entity_name)
@@ -758,7 +880,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             return []
 
         adjacency: dict[int, list[dict[str, Any]]] = {}
-        for edge in self._load_edges(vault, as_of):
+        for edge in self._load_edges(vault, as_of, agent_ids):
             adjacency.setdefault(edge["source_id"], []).append(edge)
             adjacency.setdefault(edge["target_id"], []).append(edge)
 
@@ -815,6 +937,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         ref_b: str,
         max_depth: int = MAX_TRAVERSAL_DEPTH,
         as_of: str | None = None,
+        agent_ids: list[str] | None = None,
     ) -> list[list[dict[str, Any]]]:
         """
         Shortest paths (up to MAX_PATHS) between two entities via BFS.
@@ -822,7 +945,10 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         {source, rel_type, target, source_kind, target_kind, confidence, evidence}.
         Returns [] when either entity is missing or no path within max_depth.
         as_of restricts traversal to relations valid at that timestamp;
-        default (None) considers only currently-valid ones.
+        default (None) considers only currently-valid ones. agent_ids=["*"]
+        (or any falsy/None value) applies no agent filtering — an explicit
+        opt-in for cross-namespace graph queries; a concrete list restricts
+        traversal to relations sourced from those namespaces.
         """
         max_depth = max(1, min(max_depth, MAX_TRAVERSAL_DEPTH))
         start = self._find_entity_id(vault, ref_a)
@@ -830,8 +956,9 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         if start is None or goal is None or start == goal:
             return []
 
+        effective_agent_ids = None if agent_ids == ["*"] else agent_ids
         adjacency: dict[int, list[dict[str, Any]]] = {}
-        for edge in self._load_edges(vault, as_of):
+        for edge in self._load_edges(vault, as_of, effective_agent_ids):
             adjacency.setdefault(edge["source_id"], []).append(edge)
             adjacency.setdefault(edge["target_id"], []).append(edge)
 
@@ -896,12 +1023,13 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         kind: str,
         description: str | None = None,
         embedding: list[float] | None = None,
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> int:
         """Insert or update a typed entity; stores its resolution vector if given."""
         conn = self.conn
         with conn:
             entity_id = self._upsert_entity(
-                conn, vault, name, kind, description=description
+                conn, vault, name, kind, description=description, agent_id=agent_id
             )
             if embedding is not None:
                 conn.execute(
@@ -919,11 +1047,12 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         kind: str,
         embedding: list[float],
         threshold: float,
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> dict[str, Any] | None:
         """
-        Most similar existing entity of a kind by cosine similarity of its
-        resolution vector. Returns {id, name, similarity} above threshold,
-        else None.
+        Most similar existing entity of a kind, scoped to agent_id, by
+        cosine similarity of its resolution vector. Returns
+        {id, name, similarity} above threshold, else None.
         """
         rows = self.conn.execute(
             """
@@ -933,11 +1062,11 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                 WHERE embedding MATCH ? AND k = ?
             ) v
             JOIN entities e ON e.id = v.entity_id
-            WHERE e.vault = ? AND e.kind = ?
+            WHERE e.vault = ? AND e.kind = ? AND e.agent_id = ?
             ORDER BY v.distance
             LIMIT 1
             """,
-            (serialize_f32(embedding), 10, vault, kind),
+            (serialize_f32(embedding), 10, vault, kind, agent_id),
         ).fetchall()
         if not rows:
             return None
