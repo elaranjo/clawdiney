@@ -32,14 +32,14 @@
 
 ## 4. Conflict resolution
 
-- [ ] 4.1 Add `is_conflict` column to `entities` and `relations` (default 0), additive migration
-- [ ] 4.2 Add `CONTRADICTS` relation type
-- [ ] 4.3 Implement conflict-detection comparison (normalization-aware similarity threshold) at supersede time in write paths from section 3.4
-- [ ] 4.4 Implement conflict-marking: write both facts with `is_conflict=1` and a `CONTRADICTS` relation instead of silent invalidation
-- [ ] 4.5 Add `conflicts` field to `search_brain` and `explore_graph` MCP tool responses (empty list when none)
-- [ ] 4.6 Implement explicit conflict-resolution operation (mark one fact authoritative, invalidate the other, clear `is_conflict`)
-- [ ] 4.7 Add tests: conflicting update detected, non-conflicting refinement not flagged, conflict surfaced in query response, explicit resolution clears it
-- [ ] 4.8 Re-run eval harness to confirm no regression
+- [x] 4.1 Add `is_conflict` column to `entities` and `relations` (default 0), additive migration (schema v4)
+- [x] 4.2 Add `CONTRADICTS` relation type
+- [x] 4.3 Implement conflict-detection at supersede time in the semantic-relations write path (section 3.4): same (source, rel_type) slot reasserted with a different target within one `replace_project_relations` call is a value change, not a removal — detected by cross-referencing newly-invalidated keys against newly-inserted rel_types (target-identity divergence stands in for a normalization-aware similarity threshold, since relation values here are entity references, not free text)
+- [x] 4.4 Implement conflict-marking: both facts kept current (`invalidated_at` untouched) with `is_conflict=1`, plus a `CONTRADICTS` relation between the two conflicting target entities, instead of silent invalidation
+- [x] 4.5 Add conflicts surfacing to `search_brain` and `explore_graph` MCP tool responses (text section, empty/omitted when none — tools return formatted strings, not structured JSON, consistent with the rest of the MCP surface)
+- [x] 4.6 Implement explicit conflict-resolution operation (`BrainStorage.resolve_conflict`: mark one fact authoritative, invalidate the other, clear `is_conflict` on both)
+- [x] 4.7 Add tests: conflicting update detected, non-conflicting refinement not flagged, conflict surfaced in query response, explicit resolution clears it
+- [x] 4.8 Re-run eval harness to confirm no regression
 
 ## 5. Agent namespacing
 

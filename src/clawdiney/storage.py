@@ -26,7 +26,7 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Graph relation types
 REL_LINKS_TO = "LINKS_TO"
@@ -37,6 +37,7 @@ REL_CALLS_API_OF = "CALLS_API_OF"
 REL_USES_PATTERN = "USES_PATTERN"
 REL_IMPLEMENTS = "IMPLEMENTS"
 REL_MENTIONS = "MENTIONS"
+REL_CONTRADICTS = "CONTRADICTS"
 
 # Entity kinds
 KIND_NOTE = "note"
@@ -165,6 +166,9 @@ class BrainStorage:
                 if version < 3:
                     self._migrate_v2_to_v3(conn)
                     version = 3
+                if version < 4:
+                    self._migrate_v3_to_v4(conn)
+                    version = 4
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
         """Additive migration: entity_vectors table for entity resolution."""
@@ -248,6 +252,22 @@ class BrainStorage:
             "Migrated brain.db schema v2 -> v3 (bi-temporal entities/relations)"
         )
 
+    def _migrate_v3_to_v4(self, conn: sqlite3.Connection) -> None:
+        """Additive migration: is_conflict flag on entities and relations,
+        defaulting to 0 (no unresolved conflict) for all existing rows."""
+        with conn:
+            for table in ("entities", "relations"):
+                cols = {
+                    row["name"] for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                if "is_conflict" not in cols:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN is_conflict "
+                        f"INTEGER NOT NULL DEFAULT 0"
+                    )
+            conn.execute("PRAGMA user_version = 4")
+        logger.info("Migrated brain.db schema v3 -> v4 (is_conflict)")
+
     def _validate_meta(self) -> None:
         stored_model = self._get_meta("embedding_model")
         stored_dim = self._get_meta("embedding_dimension")
@@ -315,6 +335,7 @@ CREATE TABLE entities (
     description TEXT,
     valid_at TEXT,
     invalidated_at TEXT,
+    is_conflict INTEGER NOT NULL DEFAULT 0,
     UNIQUE(vault, name, kind)
 );
 CREATE INDEX idx_entities_path ON entities(vault, path);
@@ -327,7 +348,8 @@ CREATE TABLE relations (
     evidence_chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
     confidence REAL NOT NULL DEFAULT 1.0,
     valid_at TEXT,
-    invalidated_at TEXT
+    invalidated_at TEXT,
+    is_conflict INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX idx_relations_current_unique ON relations
 (source_id, target_id, rel_type) WHERE invalidated_at IS NULL;
@@ -1016,6 +1038,10 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             )
         }
         new_keys: set[tuple[int, str]] = set()
+        # New rows inserted this call, keyed by rel_type — used below to spot
+        # a same-slot value change (old target no longer asserted, replaced
+        # by a different target for the same rel_type) vs. plain removal.
+        inserted_by_rel_type: dict[str, list[int]] = {}
         written = 0
         for rel in relations:
             confidence = float(rel["confidence"])
@@ -1032,14 +1058,16 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                 written += 1
                 continue
             if existing:
+                # Same (target, rel_type) refined (confidence/evidence
+                # changed) — not a contradiction, same asserted value.
                 conn.execute(
                     "UPDATE relations SET invalidated_at = ? WHERE id = ?",
                     (now, existing["id"]),
                 )
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO relations "
                 "(source_id, target_id, rel_type, confidence, evidence_chunk_id, valid_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
                 (
                     project_id,
                     rel["target_id"],
@@ -1049,15 +1077,107 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                     now,
                 ),
             )
+            new_id = cur.fetchone()["id"]
+            inserted_by_rel_type.setdefault(rel["rel_type"], []).append(new_id)
             written += 1
 
         for key, existing in current_rows.items():
-            if key not in new_keys:
+            if key in new_keys:
+                continue
+            target_id, rel_type = key
+            replacements = inserted_by_rel_type.get(rel_type)
+            if replacements:
+                # Same rel_type reasserted with a different target this run:
+                # a genuine value change for the same slot, not a removal —
+                # keep both sides current and flag the contradiction instead
+                # of silently invalidating the old one.
+                for new_id in replacements:
+                    self._mark_conflict(conn, existing["id"], new_id, now)
+            else:
                 conn.execute(
                     "UPDATE relations SET invalidated_at = ? WHERE id = ?",
                     (now, existing["id"]),
                 )
         return written
+
+    def _mark_conflict(
+        self, conn: sqlite3.Connection, relation_id_a: int, relation_id_b: int, now: str
+    ) -> None:
+        """Flag two current relation rows as contradicting each other and
+        link their target entities with a CONTRADICTS relation. Idempotent:
+        re-running with the same pair does not duplicate the CONTRADICTS
+        edge (relies on the same partial-unique-index conflict target)."""
+        conn.execute(
+            "UPDATE relations SET is_conflict = 1 WHERE id IN (?, ?)",
+            (relation_id_a, relation_id_b),
+        )
+        rows = {
+            row["id"]: row["target_id"]
+            for row in conn.execute(
+                "SELECT id, target_id FROM relations WHERE id IN (?, ?)",
+                (relation_id_a, relation_id_b),
+            )
+        }
+        target_a, target_b = rows[relation_id_a], rows[relation_id_b]
+        if target_a == target_b:
+            return
+        conn.execute(
+            "INSERT INTO relations "
+            "(source_id, target_id, rel_type, confidence, valid_at) "
+            "VALUES (?, ?, ?, 1.0, ?) "
+            "ON CONFLICT(source_id, target_id, rel_type) WHERE invalidated_at IS NULL "
+            "DO NOTHING",
+            (target_a, target_b, REL_CONTRADICTS, now),
+        )
+
+    def get_conflicts(self, vault: str, ref: str) -> list[dict[str, Any]]:
+        """Unresolved (is_conflict=1, currently valid) facts touching the
+        entity named/pathed `ref`. Empty list when the entity is unknown or
+        has no unresolved conflicts."""
+        entity_id = self._find_entity_id(vault, ref)
+        if entity_id is None:
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT r.id, r.source_id, r.target_id, r.rel_type, r.confidence, r.valid_at
+            FROM relations r
+            JOIN entities s ON s.id = r.source_id
+            WHERE s.vault = ? AND r.is_conflict = 1 AND r.invalidated_at IS NULL
+              AND (r.source_id = ? OR r.target_id = ?)
+            ORDER BY r.valid_at
+            """,
+            (vault, entity_id, entity_id),
+        ).fetchall()
+        if not rows:
+            return []
+        ids = {row["source_id"] for row in rows} | {row["target_id"] for row in rows}
+        entities = self._entity_rows(ids)
+        return [
+            {
+                "source": entities[row["source_id"]]["name"],
+                "rel_type": row["rel_type"],
+                "target": entities[row["target_id"]]["name"],
+                "confidence": row["confidence"],
+                "valid_at": row["valid_at"],
+                "relation_id": row["id"],
+            }
+            for row in rows
+        ]
+
+    def resolve_conflict(self, keep_relation_id: int, discard_relation_id: int) -> None:
+        """Mark one side of a conflicting pair authoritative: the other is
+        invalidated and both rows have is_conflict cleared."""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self.conn
+        with conn:
+            conn.execute(
+                "UPDATE relations SET invalidated_at = ? WHERE id = ?",
+                (now, discard_relation_id),
+            )
+            conn.execute(
+                "UPDATE relations SET is_conflict = 0 WHERE id IN (?, ?)",
+                (keep_relation_id, discard_relation_id),
+            )
 
     # ------------------------------------------------------------------
     # Introspection / health

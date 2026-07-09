@@ -262,7 +262,7 @@ class TestSchemaV2Migration:
             )
         }
         assert "entity_vectors" in tables
-        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 4
         assert "keep.md" in migrated.get_document_hashes("default")
         migrated.close()
 
@@ -303,7 +303,7 @@ class TestSchemaV3Migration:
         store.close()
 
         migrated = BrainStorage(db_path=db, dimension=DIM)
-        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.conn.execute("PRAGMA user_version").fetchone()[0] == 4
         cols = {
             row["name"] for row in migrated.conn.execute("PRAGMA table_info(entities)")
         }
@@ -327,11 +327,12 @@ class TestSchemaV3Migration:
         _index_note(store, "a.md", "content")
         store.close()
 
-        # Re-opening an already-v3 database must not error or re-migrate.
+        # Re-opening an already-migrated database must not error or re-migrate.
         reopened = BrainStorage(db_path=db, dimension=DIM)
-        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 4
         reopened._migrate_v2_to_v3(reopened.conn)
-        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        reopened._migrate_v3_to_v4(reopened.conn)
+        assert reopened.conn.execute("PRAGMA user_version").fetchone()[0] == 4
         reopened.close()
 
 
@@ -561,7 +562,6 @@ class TestTemporalFacts:
         storage.upsert_typed_entity("default", "proj-a", "project")
         storage.upsert_typed_entity("default", "proj-b", "project")
         old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
-        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
 
         storage.replace_project_relations(
             "default",
@@ -575,21 +575,18 @@ class TestTemporalFacts:
             "semantic",
             [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
         )
-        before_swap = storage.conn.execute(
+        before_retraction = storage.conn.execute(
             "SELECT MAX(valid_at) AS t FROM relations"
         ).fetchone()["t"]
 
-        # proj-a moves on to a different library; proj-b keeps the old one
-        storage.replace_project_relations(
-            "default",
-            "proj-a",
-            "semantic",
-            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.5}],
-        )
+        # proj-a stops asserting anything for USES_PATTERN (no replacement
+        # target -> plain retraction, not a same-slot value conflict);
+        # proj-b keeps the old one
+        storage.replace_project_relations("default", "proj-a", "semantic", [])
 
         assert storage.find_paths("default", "proj-a", "proj-b") == []
         historical = storage.find_paths(
-            "default", "proj-a", "proj-b", as_of=before_swap
+            "default", "proj-a", "proj-b", as_of=before_retraction
         )
         assert historical
         assert any(
@@ -606,3 +603,142 @@ class TestTemporalFacts:
 
         assert storage.get_related_notes("A.md", "default") == ["B.md"]
         assert storage.get_related_notes("A.md", "default", as_of=valid_at) == ["B.md"]
+
+
+class TestConflictResolution:
+    def test_conflicting_value_marks_both_current_and_flags_is_conflict(self, storage):
+        old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
+        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        # Same slot (proj, USES_PATTERN) reasserted with a different target
+        # in the same call -> conflict, not plain supersede.
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.7}],
+        )
+
+        rows = storage.conn.execute(
+            "SELECT target_id, is_conflict, invalidated_at FROM relations "
+            "WHERE rel_type = 'USES_PATTERN' ORDER BY id"
+        ).fetchall()
+        assert len(rows) == 2
+        assert all(r["is_conflict"] == 1 for r in rows)
+        assert all(r["invalidated_at"] is None for r in rows)
+        assert {r["target_id"] for r in rows} == {old_lib, new_lib}
+
+    def test_conflict_creates_contradicts_relation_between_targets(self, storage):
+        old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
+        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.7}],
+        )
+
+        contradiction = storage.conn.execute(
+            "SELECT source_id, target_id FROM relations WHERE rel_type = 'CONTRADICTS'"
+        ).fetchone()
+        assert contradiction is not None
+        assert {contradiction["source_id"], contradiction["target_id"]} == {
+            old_lib,
+            new_lib,
+        }
+
+    def test_non_conflicting_removal_is_not_flagged(self, storage):
+        lib = storage.upsert_typed_entity("default", "lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": lib, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        # No replacement asserted for USES_PATTERN -> plain retraction.
+        storage.replace_project_relations("default", "proj", "semantic", [])
+
+        row = storage.conn.execute(
+            "SELECT is_conflict, invalidated_at FROM relations WHERE rel_type = 'USES_PATTERN'"
+        ).fetchone()
+        assert row["is_conflict"] == 0
+        assert row["invalidated_at"] is not None
+        assert (
+            storage.conn.execute(
+                "SELECT COUNT(*) AS n FROM relations WHERE rel_type = 'CONTRADICTS'"
+            ).fetchone()["n"]
+            == 0
+        )
+
+    def test_get_conflicts_returns_unresolved_pair(self, storage):
+        old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
+        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.7}],
+        )
+
+        conflicts = storage.get_conflicts("default", "proj")
+        assert len(conflicts) == 2
+        assert {c["target"] for c in conflicts} == {"old-lib", "new-lib"}
+
+    def test_get_conflicts_empty_for_unknown_or_unconflicted_entity(self, storage):
+        assert storage.get_conflicts("default", "ghost") == []
+        storage.upsert_typed_entity("default", "quiet-lib", "library")
+        assert storage.get_conflicts("default", "quiet-lib") == []
+
+    def test_resolve_conflict_invalidates_loser_and_clears_flag(self, storage):
+        old_lib = storage.upsert_typed_entity("default", "old-lib", "library")
+        new_lib = storage.upsert_typed_entity("default", "new-lib", "library")
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": old_lib, "rel_type": "USES_PATTERN", "confidence": 0.6}],
+        )
+        storage.replace_project_relations(
+            "default",
+            "proj",
+            "semantic",
+            [{"target_id": new_lib, "rel_type": "USES_PATTERN", "confidence": 0.7}],
+        )
+        conflicts = storage.get_conflicts("default", "proj")
+        keep = next(c for c in conflicts if c["target"] == "new-lib")
+        discard = next(c for c in conflicts if c["target"] == "old-lib")
+
+        storage.resolve_conflict(keep["relation_id"], discard["relation_id"])
+
+        assert storage.get_conflicts("default", "proj") == []
+        rows = {
+            r["target_id"]: r
+            for r in storage.conn.execute(
+                "SELECT target_id, is_conflict, invalidated_at FROM relations "
+                "WHERE rel_type = 'USES_PATTERN'"
+            )
+        }
+        assert rows[new_lib]["is_conflict"] == 0
+        assert rows[new_lib]["invalidated_at"] is None
+        assert rows[old_lib]["is_conflict"] == 0
+        assert rows[old_lib]["invalidated_at"] is not None
+        # expand_neighborhood (current-only) now sees only the winner
+        result = storage.expand_neighborhood("proj", "default", depth=1)
+        assert [r["name"] for r in result] == ["new-lib"]
