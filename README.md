@@ -184,26 +184,9 @@ This scans `~/projetos/` and creates a vault per project with:
 
 ## 🔌 MCP Client Configuration
 
-### Option A: Docker (SSE — Recommended)
+Clawdiney runs as a local Python process (stdio transport) — no server to start separately, no container. Your MCP client (Claude Code, OpenCode, etc.) launches it on demand.
 
-The Docker container uses SSE transport on port 8006:
-
-```json
-{
-  "projects": {
-    "/path/to/your/project": {
-      "mcpServers": {
-        "clawdiney": {
-          "url": "http://localhost:8006/mcp"
-        }
-      }
-    }
-  }
-}
-```
-
-### Option B: Local Python (stdio)
-
+**Claude Code** (`~/.claude.json`, project scope):
 ```json
 {
   "projects": {
@@ -211,7 +194,13 @@ The Docker container uses SSE transport on port 8006:
       "mcpServers": {
         "clawdiney": {
           "command": "/path/to/clawdiney/venv/bin/python3",
-          "args": ["-m", "clawdiney.mcp_server"]
+          "args": ["-m", "clawdiney.mcp_server"],
+          "env": {
+            "VAULTS_DIR": "/path/to/your/vaults",
+            "MCP_DEFAULT_VAULT": "general",
+            "MODEL_NAME": "bge-m3:latest",
+            "ENABLE_RERANK": "true"
+          }
         }
       }
     }
@@ -219,34 +208,46 @@ The Docker container uses SSE transport on port 8006:
 }
 ```
 
-> **Note:** The Docker container uses SSE transport. The local Python server defaults to stdio. Set `MCP_TRANSPORT=sse` in your `.env` for local SSE mode.
+**OpenCode** (`opencode.json`):
+```json
+{
+  "mcp": {
+    "clawdiney": {
+      "type": "local",
+      "command": ["/path/to/clawdiney/venv/bin/python3", "-m", "clawdiney.mcp_server"],
+      "enabled": true,
+      "environment": {
+        "VAULTS_DIR": "/path/to/your/vaults",
+        "MCP_DEFAULT_VAULT": "general",
+        "MODEL_NAME": "bge-m3:latest",
+        "ENABLE_RERANK": "true"
+      }
+    }
+  }
+}
+```
 
-For detailed Docker deployment instructions, see [DOCKER_MCP.md](DOCKER_MCP.md).
+Restart the client session after registering — MCP config is read once at session start.
+
+> Remote/network access (SSE transport) is still available by setting `MCP_TRANSPORT=sse` before launching `clawdiney.mcp_server` directly, but stdio (the default, no config needed) is what both clients above use and is the supported path.
 
 ---
 
 ## 🚀 Usage
 
-### Start All Services
+### Ensure Ollama Is Running
 
-To start all services (Neo4j, ChromaDB and MCP Server) together:
+Clawdiney's only external dependency is Ollama (for embeddings, and card-generation LLM calls). Everything else — vectors, full-text search, and the knowledge graph — lives in a single embedded SQLite file (`brain.db`, default `~/.clawdiney/brain.db`). No services to start or stop.
 
 ```bash
-./scripts/run_brain.sh
+ollama serve   # if not already running as a daemon
+ollama pull bge-m3
 ```
 
-This script will:
-- Start Docker containers for Neo4j and ChromaDB
-- Wait for services to initialize
-- Index the Obsidian vault
-- Start the MCP server in background
-
-### Stop All Services
-
-To stop all services, press Ctrl+C in the terminal where `run_brain.sh` is running, or execute:
+### Index Your Vault(s)
 
 ```bash
-docker compose -f docker/docker-compose.yml down
+./venv/bin/python3 -m clawdiney.indexer
 ```
 
 ### Via MCP Client (Recommended)
@@ -255,11 +256,13 @@ With MCP configured, the agent has access to **read and write** tools:
 
 #### Read Tools (Discovery)
 
-- `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
-- `explore_graph(note_name)` - Find notes related to a specific topic via WikiLinks
+- `search_brain(query)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components
+- `explore_graph(note_name)` - Find entities related to a note or project — notes, WikiLinks, tags, or (for projects) dependencies/patterns — with relation type and evidence
 - `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 - `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
-- `health_check()` - Check health status of ChromaDB, Neo4j, and Ollama
+- `get_project_card(name)` - Full project card (Purpose, Stack, Architecture, Interfaces) — the first call when touching an unfamiliar project
+- `how_do_projects_relate(a, b)` - Graph paths between two projects (shared dependencies, datastores, patterns) with evidence
+- `health_check()` - Check health of `brain.db`, Ollama, and the optional reranker, plus per-vault document counts
 
 #### Write Tools (Knowledge Capture)
 
@@ -301,80 +304,85 @@ If MCP is not available, use the direct script:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                AI Agent (OpenCode, Claude, etc.)        │
+│                AI Agent (Claude Code, OpenCode, etc.)    │
 └────────────────────────┬────────────────────────────────┘
-                         │ MCP Protocol (SSE / stdio)
+                         │ MCP Protocol (stdio)
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Clawdiney MCP Server                        │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
-│  │  ChromaDB    │ │    Neo4j     │ │  Vault Detector  │ │
-│  │  (Vector)    │ │   (Graph)    │ │  (CWD-based)     │ │
-│  │  per-vault   │ │  namespaced  │ │  → vault_id      │ │
-│  │  collections │ │  :Note nodes │ └──────────────────┘ │
-│  └──────┬───────┘ └──────┬───────┘                      │
-└─────────┼────────────────┼──────────────────────────────┘
-          │                │
-          ▼                ▼
+│  ┌──────────────────────────────┐ ┌──────────────────┐  │
+│  │      Hybrid Query Engine     │ │  Vault Detector  │  │
+│  │  BM25 (FTS5) + Vector (KNN)  │ │  (CWD-based)     │  │
+│  │  → RRF fusion → rerank       │ │  → vault_id      │  │
+│  └───────────────┬──────────────┘ └──────────────────┘  │
+└──────────────────┼───────────────────────────────────────┘
+                    ▼
+┌─────────────────────────────────────────────────────────┐
+│         brain.db (single embedded SQLite file)           │
+│  documents · chunks · chunk_vectors (sqlite-vec)          │
+│  chunk_fts (FTS5) · entities · relations (graph)          │
+└─────────────────────────────────────────────────────────┘
+                    ▲
+                    │ indexed from
 ┌─────────────────────────────────────────────────────────┐
 │              VAULTS_DIR (~/clawdiney-vaults/)            │
 │                                                         │
-│  Budget/  Budget-SDK/  OnflyApi/  User/  channel-back/  │
-│  Company/ Company-SDK/ credit/    ...→ general/ (symlink)│
-│                                                         │
+│  general/ (Onfly ecosystem)  clawdiney/ (this project)  │
 │  Each vault has: clawdiney.toml + P.A.R.A. structure    │
 └─────────────────────────────────────────────────────────┘
 ```
+
+Only external dependency: **Ollama** (embeddings + card-generation LLM calls). No Docker, no separate vector/graph/cache servers.
 
 ## 📁 Project Structure
 
 ```
 clawdiney/
-├── src/clawdiney/            # Main Python package
-│   ├── __init__.py           # Package exports
-│   ├── config.py             # Multi-vault configuration with VAULTS_DIR discovery
-│   ├── vault_config.py       # VaultConfig dataclass + clawdiney.toml parser
-│   ├── indexer.py            # Full indexing (ChromaDB per-vault + Neo4j namespaced)
-│   ├── incremental_indexer.py# Incremental sync with state tracking
-│   ├── query_engine.py       # Hybrid search with vault fallback chain
-│   ├── vault_writer.py       # Thread-safe write operations per vault
-│   ├── mcp_server.py         # MCP server with CWD auto-detection + vault parameter
-│   ├── mcp_wrapper.py        # Docker MCP wrapper (SSE transport)
-│   ├── chunking.py           # Text chunking strategies
-│   ├── constants.py          # Application constants
-│   ├── embedding_providers.py# Embedding provider interfaces
-│   ├── logging_config.py     # Logging setup
-│   ├── cli.py                # CLI entry point
+├── src/clawdiney/             # Main Python package
+│   ├── __init__.py            # Package exports
+│   ├── config.py              # Multi-vault configuration, VAULTS_DIR discovery, BRAIN_DB_PATH
+│   ├── vault_config.py        # VaultConfig dataclass + clawdiney.toml parser
+│   ├── storage.py             # Embedded brain.db gateway (sqlite-vec + FTS5 + graph tables)
+│   ├── indexer.py             # Full indexing into brain.db
+│   ├── incremental_indexer.py # Incremental sync (content hashes stored in brain.db)
+│   ├── query_engine.py        # Hybrid search (BM25 + vector, RRF fusion) + vault fallback chain
+│   ├── reranker.py            # Cross-encoder reranking (optional extra, GPU→CPU fallback)
+│   ├── embedding_providers.py # EmbeddingProvider protocol (Ollama default, OpenAI optional)
+│   ├── vault_writer.py        # Thread-safe write operations per vault
+│   ├── mcp_server.py          # MCP server: CWD auto-detection, search/graph/write tools
+│   ├── project_indexer.py     # Analyzes codebases → enriched project cards for Obsidian
+│   ├── project_index_config.py# Selective file indexing patterns (include/exclude)
+│   ├── entity_extractor.py    # Project knowledge graph: manifest parsing + LLM extraction
+│   ├── chunking.py            # Text chunking strategies
+│   ├── constants.py           # Application constants
+│   ├── logging_config.py      # Logging setup
+│   ├── cli.py                 # CLI entry point (vault create/list)
 │   └── scripts/
-│       ├── watch_vault.py    # File watcher for real-time sync
-│       └── sync_vault.py     # Manual sync script (per-vault aware)
+│       ├── watch_vault.py     # File watcher for real-time vault sync
+│       ├── sync_vault.py      # Manual sync script (per-vault aware)
+│       ├── watch_projects.py  # File watcher for codebase → project card sync
+│       └── index_projects.py  # CLI: index projects to Obsidian
 │
-├── tests/                    # Test suite
-│   ├── test_config.py
-│   ├── test_vault_config.py
-│   ├── test_indexer.py
+├── tests/                     # Test suite (pytest, no service mocks — real tempfile SQLite)
+│   ├── test_storage.py
 │   ├── test_query_engine.py
+│   ├── test_hybrid_search.py
+│   ├── test_reranker.py
+│   ├── test_entity_extractor.py
 │   ├── test_mcp_server.py
-│   ├── test_vault_writer.py
 │   └── ...
 │
-├── scripts/                  # Shell scripts
-│   ├── setup_brain.sh        # Bootstrap setup
-│   ├── run_brain.sh          # Start all services
-│   ├── ask_brain.sh          # Query from command line
-│   ├── run_tests.sh          # Run test suite
-│   ├── provision_project_vaults.sh  # Scan ~/projetos/ and create vaults
-│   ├── migrate_to_multi_vault.sh    # Migrate single-vault to multi-vault
+├── scripts/                   # Shell scripts
+│   ├── setup_brain.sh         # Bootstrap setup (venv, deps, pull embedding model, index)
+│   ├── ask_brain.sh           # Query from command line
+│   ├── run_tests.sh           # Run test suite
+│   ├── claude_hook_context.py # Optional Claude Code UserPromptSubmit hook (proactive context)
+│   ├── provision_project_vaults.sh
 │   └── ...
 │
-├── docker/                   # Docker configuration
-│   ├── Dockerfile
-│   └── docker-compose.yml
-│
-├── .env.example              # Environment template with multi-vault setup
-├── pyproject.toml             # Python project configuration
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
+├── .env.example                # Environment template with multi-vault setup
+├── pyproject.toml               # Python project configuration (source of truth for dependencies)
+└── README.md                    # This file
 ```
 
 ---
@@ -390,10 +398,6 @@ The MCP server automatically checks for vault changes on startup and syncs any m
 For active development, run the file watcher that syncs changes in real-time:
 
 ```bash
-# Continuous watcher mode
-WATCHER_MODE=true ./scripts/run_brain.sh
-
-# Or directly
 ./venv/bin/python3 -m clawdiney.scripts.watch_vault
 ```
 
@@ -418,68 +422,59 @@ The agent has immediate access to new/modified notes after sync completes.
 - **Multi-Vault Isolation:** Each project's data stays in its own directory under `VAULTS_DIR`. No vault reads another vault's `.md` files.
 - **Symlink Support:** You can symlink a vault directory, allowing you to keep your personal vault in one location while Clawdiney references it.
 - **Local Data:** Everything runs locally on your machine. Nothing is sent to the cloud (except if you use cloud models).
-- **Isolation:** Database data (Neo4j/ChromaDB) stays in local Docker volumes.
+- **Single-file storage:** All indexed data lives in one local SQLite file (`brain.db`), scoped by vault at the row level. Delete the file to wipe everything; copy it to back everything up.
 
 ---
 
 ## 🐛 Troubleshooting
 
+Start with the MCP `health_check()` tool — it reports `brain.db` status (path, document/chunk/entity/relation counts), Ollama connectivity, and whether the reranker loaded, plus per-vault document counts.
+
 ### MCP client doesn't see the server
-- Check if the client configuration points to `clawdiney.mcp_server` or `http://localhost:8006/mcp`.
-- Restart the client session.
-- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server` (stdio) or `curl http://localhost:8006/sse` (SSE)
+- Check the client config points `command`/`args` at `<venv>/bin/python3 -m clawdiney.mcp_server` and restart the client session (MCP config is only read at session start).
+- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server` (should print Ollama model validation, then wait on stdio — Ctrl+C to stop).
 
-### Neo4j connection error / Container restarting
-- Check if the container is running: `docker compose -f docker/docker-compose.yml ps neo4j`
-- The Neo4j container uses a **Docker named volume** (`clawdiney-neo4j-data`) instead of a bind mount. This avoids filesystem permission issues (chown) common with Docker Desktop.
-- If the volume is corrupted, you can recreate it (data is fully rebuildable via `python -m clawdiney.indexer`):
-  1. `docker compose -f docker/docker-compose.yml down neo4j`
-  2. `docker volume rm docker_clawdiney-neo4j-data`
-  3. `docker compose -f docker/docker-compose.yml up -d neo4j`
-  4. Reindex: `OLLAMA_HOST= ./venv/bin/python3 -m clawdiney.indexer`
-- **⚠️ WARNING**: `docker compose down -v` will destroy ALL volumes (Neo4j, ChromaDB, Redis). Use `down` without `-v` to preserve data.
+### `search_brain` returns nothing
+- Run `health_check()` — if `documents: 0`, the vault hasn't been indexed yet: `./venv/bin/python3 -m clawdiney.indexer`.
+- Check `VAULTS_DIR` / `VAULT_PATH` env vars match where your `.md` files actually live.
 
-### ChromaDB connection error
-- Check logs: `docker compose -f docker/docker-compose.yml logs chromadb`
-- Recreate the database (data will be lost): `rm -rf chroma_data && docker compose -f docker/docker-compose.yml up -d`
+### "Re-index required" / `SchemaMismatchError`
+- `brain.db` was created with a different embedding model or dimension than your current config. Delete the file (`rm ~/.clawdiney/brain.db`, or your `BRAIN_DB_PATH`) and re-run the indexer — it rebuilds from your vault files, nothing else is lost.
 
-### MCP Server restart loop (Docker)
-- The Docker container now uses **SSE transport** (fixed in v2.0). If you see continuous restarts:
-  - Verify `MCP_TRANSPORT=sse` in `docker/docker-compose.yml`
-  - Verify `OLLAMA_HOST=host.docker.internal` is set for container-to-host Ollama connectivity
-  - Check logs: `docker compose -f docker/docker-compose.yml logs mcp-server`
+### Reranker doesn't activate
+- Check it's installed: `pip install clawdiney[rerank]` (adds `sentence-transformers`, ~2GB with model weights).
+- On small/shared GPUs, the reranker automatically retries on CPU if CUDA runs out of memory — check the logs for "retrying on CPU". If it still fails, set `ENABLE_RERANK=false` to skip it entirely; search still works via BM25+vector RRF fusion.
+
+### Ollama connection error
+- Confirm Ollama is running: `ollama list`. Start it with `ollama serve` if not.
+- Confirm the embedding model is pulled: `ollama pull bge-m3`.
 
 ---
 
 ## 📚 Useful Commands
 
 ```bash
-# Check container status
-docker compose ps
+# Check brain.db health (documents/chunks/entities/relations, Ollama, reranker)
+# via any MCP client, or directly:
+./venv/bin/python3 -c "from clawdiney.storage import get_storage; print(get_storage().stats())"
 
-# View Neo4j logs
-docker compose logs neo4j
-
-# Stop all services
-docker compose down
-
-# Start all services (including MCP Server)
-./run_brain.sh
-
-# Start with file watcher (real-time sync)
-WATCHER_MODE=true ./run_brain.sh
+# Index all configured vaults
+./venv/bin/python3 -m clawdiney.indexer
 
 # Check sync status
-./venv/bin/python3 sync_vault.py --status
+./venv/bin/python3 -m clawdiney.scripts.sync_vault --status
 
 # Incremental sync (only changed files)
-./venv/bin/python3 sync_vault.py
+./venv/bin/python3 -m clawdiney.scripts.sync_vault
 
 # Full sync (reindex everything)
-./venv/bin/python3 sync_vault.py --full
+./venv/bin/python3 -m clawdiney.scripts.sync_vault --full
 
-# Test search
-./ask_brain.sh "your query"
+# Real-time file watcher
+./venv/bin/python3 -m clawdiney.scripts.watch_vault
+
+# Test search from the command line
+./scripts/ask_brain.sh "your query"
 ```
 
 ---
@@ -523,13 +518,13 @@ Initial full sync depends on vault size:
 - **Manual:** Run `python sync_vault.py` for on-demand sync
 
 ### "Does it work on Windows?"
-**Yes!** Through **WSL2** (Windows Subsystem for Linux). Follow these steps:
+**Yes!** Through **WSL2** (Windows Subsystem for Linux):
 1. Install WSL2: `wsl --install` (in PowerShell as Admin)
-2. Install Docker Desktop for Windows and enable WSL2 integration
+2. Install Ollama for Windows (or inside WSL2) — see [ollama.com](https://ollama.com/)
 3. Inside WSL2, follow the normal installation instructions as if it were Linux
 
 ### "Which Linux distribution is recommended?"
-The system has been tested mainly on **Ubuntu 22.04+** and **Debian 11+**, but it should work on any modern distribution with Docker and Python 3.10+.
+The system has been tested mainly on **Ubuntu 22.04+** and **Debian 11+**, but it should work on any modern distribution with Python 3.10+ and Ollama — no other OS-level requirements.
 
 ### "What if I use another model instead of Qwen in Ollama?"
 **It works normally.** The Brain is model-agnostic. You use whatever model you prefer in Claude Code. The `bge-m3` is just for generating embeddings (vectors), not for answering questions.
@@ -559,9 +554,9 @@ Use the `add_learning()` tool which automatically routes to the correct folder:
 ## 🤝 Contributing
 
 To add new tools to MCP:
-1. Edit `brain_mcp_server.py`
+1. Edit `src/clawdiney/mcp_server.py`
 2. Add a new function decorated with `@mcp.tool()`
-3. Test locally before committing.
+3. Add tests (`tests/test_mcp_server.py`) and run `./scripts/run_tests.sh` before committing.
 
 ---
 
