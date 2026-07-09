@@ -327,7 +327,9 @@ class BrainQueryEngine:
                 v for v in fallback_chain if v != vault_override
             ]
 
-        rows = self._hybrid_retrieve(processed_query, fallback_chain, n_results, mode=mode)
+        rows = self._hybrid_retrieve(
+            processed_query, fallback_chain, n_results, mode=mode
+        )
         rows = self._dedupe_by_note(rows)
 
         if use_rerank and Config.ENABLE_RERANK and rows:

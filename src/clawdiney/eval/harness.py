@@ -155,9 +155,7 @@ def run_eval(
                 query=gq.query,
                 expected_paths=gq.expected_paths,
                 retrieved_paths=retrieved_paths,
-                recall_at_k=metrics_mod.recall_at_k(
-                    retrieved_paths, gq.expected_paths
-                ),
+                recall_at_k=metrics_mod.recall_at_k(retrieved_paths, gq.expected_paths),
                 reciprocal_rank=metrics_mod.reciprocal_rank(
                     retrieved_paths, gq.expected_paths
                 ),

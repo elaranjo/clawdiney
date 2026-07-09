@@ -12,7 +12,9 @@ def recall_at_k(retrieved_paths: Iterable[str], expected_paths: Iterable[str]) -
     return hits / len(expected)
 
 
-def reciprocal_rank(retrieved_paths: Iterable[str], expected_paths: Iterable[str]) -> float:
+def reciprocal_rank(
+    retrieved_paths: Iterable[str], expected_paths: Iterable[str]
+) -> float:
     """1/rank of the first retrieved path that is in expected_paths, else 0.0."""
     expected = set(expected_paths)
     for rank, path in enumerate(retrieved_paths, start=1):

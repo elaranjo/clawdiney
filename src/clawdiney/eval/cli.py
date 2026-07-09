@@ -12,11 +12,15 @@ from . import harness
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FIXTURE_VAULT = Path(__file__).resolve().parents[3] / "tests" / "eval" / "fixture_vault"
+DEFAULT_FIXTURE_VAULT = (
+    Path(__file__).resolve().parents[3] / "tests" / "eval" / "fixture_vault"
+)
 DEFAULT_GOLDEN_QUERIES = (
     Path(__file__).resolve().parents[3] / "tests" / "eval" / "golden_queries.jsonl"
 )
-DEFAULT_BASELINE = Path(__file__).resolve().parents[3] / "tests" / "eval" / "baseline.json"
+DEFAULT_BASELINE = (
+    Path(__file__).resolve().parents[3] / "tests" / "eval" / "baseline.json"
+)
 
 ALL_RUN_CONFIGS: list[tuple[str, bool]] = [
     ("hybrid", True),
@@ -42,13 +46,20 @@ def main() -> None:
     parser.add_argument("--fixture-vault", type=Path, default=DEFAULT_FIXTURE_VAULT)
     parser.add_argument("--golden", type=Path, default=DEFAULT_GOLDEN_QUERIES)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    parser.add_argument("--db", type=Path, default=None, help="Reuse an already-indexed brain.db instead of re-indexing")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Reuse an already-indexed brain.db instead of re-indexing",
+    )
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument(
         "--mode", choices=["hybrid", "bm25", "vector"], default="hybrid"
     )
     rerank_group = parser.add_mutually_exclusive_group()
-    rerank_group.add_argument("--rerank", dest="rerank", action="store_true", default=None)
+    rerank_group.add_argument(
+        "--rerank", dest="rerank", action="store_true", default=None
+    )
     rerank_group.add_argument("--no-rerank", dest="rerank", action="store_false")
     parser.add_argument(
         "--all-modes",

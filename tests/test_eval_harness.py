@@ -103,10 +103,14 @@ class TestRunEvalAgainstFixtureIndex:
         )
 
         db_path = tmp_path / "eval.db"
-        storage = build_fixture_index(vault_root, db_path, provider=FakeProvider(), dimension=DIM)
+        storage = build_fixture_index(
+            vault_root, db_path, provider=FakeProvider(), dimension=DIM
+        )
 
         with isolated_single_vault_config(vault_root):
-            engine = BrainQueryEngine(vault="eval", storage=storage, provider=FakeProvider())
+            engine = BrainQueryEngine(
+                vault="eval", storage=storage, provider=FakeProvider()
+            )
 
         golden = [GoldenQuery(query="zorbulator", expected_paths=["zorbulator.md"])]
         run = run_eval(engine, golden, mode="bm25", use_rerank=False, k=2)
@@ -122,13 +126,19 @@ class TestRunEvalAgainstFixtureIndex:
 
         vault_root = tmp_path / "fixture_vault"
         vault_root.mkdir()
-        (vault_root / "note.md").write_text("# Note\n\nunrelated content", encoding="utf-8")
+        (vault_root / "note.md").write_text(
+            "# Note\n\nunrelated content", encoding="utf-8"
+        )
 
         db_path = tmp_path / "eval.db"
-        storage = build_fixture_index(vault_root, db_path, provider=FakeProvider(), dimension=DIM)
+        storage = build_fixture_index(
+            vault_root, db_path, provider=FakeProvider(), dimension=DIM
+        )
 
         with isolated_single_vault_config(vault_root):
-            engine = BrainQueryEngine(vault="eval", storage=storage, provider=FakeProvider())
+            engine = BrainQueryEngine(
+                vault="eval", storage=storage, provider=FakeProvider()
+            )
 
         golden = [GoldenQuery(query="note", expected_paths=["does_not_exist.md"])]
         run = run_eval(engine, golden, mode="hybrid", use_rerank=False, k=2)
