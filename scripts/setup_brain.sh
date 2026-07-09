@@ -80,19 +80,29 @@ echo "🤖 Configuring Claude Code MCP integration..."
 read -p "Do you want to automatically configure Claude Code? (y/n): " configure_claude
 if [[ $configure_claude =~ ^[Yy]$ ]]; then
     CLAUDE_CONFIG="$HOME/.claude.json"
-    
-    if [ -f "$CLAUDE_CONFIG" ]; then
-        echo "⚠️  Found existing Claude config at $CLAUDE_CONFIG"
-        echo "   The MCP server configuration will be added to the 'projetos' project entry."
-        echo "   Press Enter to continue, or Ctrl+C to skip..."
-        read -p ""
-        
-        # Note: This is a simplified approach. A full implementation would use jq to properly merge JSON.
-        echo "✅ Claude Code configuration note: Please ensure the MCP server is added to your .claude.json"
-        echo "   See the README.md for manual configuration instructions."
-    else
+
+    if [ ! -f "$CLAUDE_CONFIG" ]; then
         echo "⚠️  Claude Code config not found at $CLAUDE_CONFIG"
-        echo "   Run Claude Code once to generate the config, then re-run this script or configure manually."
+        echo "   Run Claude Code once to generate the config, then re-run this script."
+    else
+        DEFAULT_PROJECTS_DIR="$(dirname "$PROJECT_DIR")"
+        read -p "Which directory holds the projects you want Claude Code to search from? [$DEFAULT_PROJECTS_DIR]: " PROJECTS_DIR
+        PROJECTS_DIR="${PROJECTS_DIR:-$DEFAULT_PROJECTS_DIR}"
+
+        VAULTS_DIR_VALUE="$(grep -E '^VAULTS_DIR=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+        VAULTS_DIR_VALUE="${VAULTS_DIR_VALUE:-$HOME/clawdiney-vaults}"
+
+        echo ""
+        echo "This will add/update the 'clawdiney' MCP server entry under:"
+        echo "  .projects[\"$PROJECTS_DIR\"].mcpServers.clawdiney"
+        echo "in $CLAUDE_CONFIG (a timestamped backup is made first)."
+        echo ""
+
+        "$SCRIPT_DIR/venv/bin/python3" "$SCRIPT_DIR/configure_claude_mcp.py" \
+            --claude-config "$CLAUDE_CONFIG" \
+            --projects-dir "$PROJECTS_DIR" \
+            --python-bin "$SCRIPT_DIR/venv/bin/python3" \
+            --vaults-dir "$VAULTS_DIR_VALUE"
     fi
 fi
 
