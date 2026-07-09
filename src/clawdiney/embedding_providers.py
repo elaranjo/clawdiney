@@ -74,7 +74,9 @@ class OllamaEmbeddingProvider:
     @_RETRY
     def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text via ollama.embed."""
-        response = self.ollama_client.embed(model=self.model_name, input=text)
+        response = self.ollama_client.embed(
+            model=self.model_name, input=text, keep_alive="30m"
+        )
         return list(response["embeddings"][0])
 
     @_RETRY
@@ -82,7 +84,9 @@ class OllamaEmbeddingProvider:
         """Generate embeddings for multiple texts in one native batch call."""
         if not texts:
             return []
-        response = self.ollama_client.embed(model=self.model_name, input=texts)
+        response = self.ollama_client.embed(
+            model=self.model_name, input=texts, keep_alive="30m"
+        )
         return [list(vector) for vector in response["embeddings"]]
 
 
