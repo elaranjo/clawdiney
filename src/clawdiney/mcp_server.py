@@ -146,6 +146,18 @@ def _format_chunks(chunks):
     return "\n".join(lines)
 
 
+def _format_conflicts(conflicts):
+    if not conflicts:
+        return ""
+    lines = ["\n\nUnresolved conflicts:"]
+    for c in conflicts:
+        lines.append(
+            f"- {c['source']} -{c['rel_type']}-> {c['target']} "
+            f"(confidence {c['confidence']:.2f}, relation_id={c['relation_id']})"
+        )
+    return "\n".join(lines)
+
+
 # --- MCP Tools ---
 
 
@@ -167,7 +179,13 @@ def search_brain(query: str, vault: str = None) -> str:
             else f"Search query: {query}"
         )
         vault_label = engine.current_vault
-        return f"Brain Search Results for '{query}' [vault: {vault_label}]:\n\n{engine.query(query, vault_override=vault)}"
+        rows = engine.retrieve(query, vault_override=vault)
+        briefing = engine.build_context(rows, expand_graph=True)
+        conflicts_section = _format_conflicts(engine.get_conflicts_for_rows(rows))
+        return (
+            f"Brain Search Results for '{query}' [vault: {vault_label}]:\n\n"
+            f"{briefing}{conflicts_section}"
+        )
     except Exception as e:
         logger.error(f"search_brain failed: {e}")
         return f"Error in search_brain: {str(e)}"
@@ -190,8 +208,13 @@ def explore_graph(note_name: str, vault: str = None) -> str:
         logger.info(f"Explore graph: {note_name}")
         vault_name = vault or engine.current_vault
         neighbors = engine.storage.expand_neighborhood(note_name, vault_name, depth=1)
+        conflicts_section = _format_conflicts(
+            engine.storage.get_conflicts(vault_name, note_name)
+        )
         if not neighbors:
             logger.info(f"No connections found for: {note_name}")
+            if conflicts_section:
+                return f"No direct connections found for note: {note_name}{conflicts_section}"
             return f"No direct connections found for note: {note_name}"
 
         lines = []
@@ -207,7 +230,11 @@ def explore_graph(note_name: str, vault: str = None) -> str:
                     entry += f" — evidence: {item['evidence']}"
                 lines.append(entry)
         logger.info(f"Found {len(neighbors)} related entities for: {note_name}")
-        return f"Entities connected to {note_name}:\n" + "\n".join(lines)
+        return (
+            f"Entities connected to {note_name}:\n"
+            + "\n".join(lines)
+            + conflicts_section
+        )
     except Exception as e:
         logger.error(f"explore_graph failed: {e}")
         return f"Error in explore_graph: {str(e)}"

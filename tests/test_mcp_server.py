@@ -21,7 +21,13 @@ def mock_engine():
     engine = MagicMock()
     engine.current_vault = "default"
     engine.query.return_value = "Mocked search results"
+    engine.retrieve.return_value = [
+        {"path": "some/note.md", "vault": "default", "content": "body"}
+    ]
+    engine.build_context.return_value = "Mocked search results"
+    engine.get_conflicts_for_rows.return_value = []
     engine.get_related_notes.return_value = ["related-note-1.md"]
+    engine.storage.get_conflicts.return_value = []
     engine.storage.expand_neighborhood.return_value = [
         {
             "name": "related-note-1.md",
@@ -100,6 +106,69 @@ class TestSearchTools:
         result = explore_graph(note_name="test-note", vault="projects")
         assert "related-note-1.md" in result
         mock_get_engine.assert_called_once_with(vault="projects")
+
+    def test_search_brain_surfaces_conflicts(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        mock_engine.get_conflicts_for_rows.return_value = [
+            {
+                "source": "proj",
+                "rel_type": "USES_PATTERN",
+                "target": "old-lib",
+                "confidence": 0.6,
+                "relation_id": 1,
+            },
+            {
+                "source": "proj",
+                "rel_type": "USES_PATTERN",
+                "target": "new-lib",
+                "confidence": 0.7,
+                "relation_id": 2,
+            },
+        ]
+        from clawdiney.mcp_server import search_brain
+
+        result = search_brain(query="test query")
+        assert "Unresolved conflicts" in result
+        assert "old-lib" in result and "new-lib" in result
+
+    def test_search_brain_no_conflicts_no_section(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        from clawdiney.mcp_server import search_brain
+
+        result = search_brain(query="test query")
+        assert "Unresolved conflicts" not in result
+
+    def test_explore_graph_surfaces_conflicts(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        mock_engine.storage.get_conflicts.return_value = [
+            {
+                "source": "proj",
+                "rel_type": "USES_PATTERN",
+                "target": "old-lib",
+                "confidence": 0.6,
+                "relation_id": 1,
+            }
+        ]
+        from clawdiney.mcp_server import explore_graph
+
+        result = explore_graph(note_name="proj")
+        assert "Unresolved conflicts" in result
+        assert "old-lib" in result
+
+    def test_explore_graph_no_conflicts_no_section(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        from clawdiney.mcp_server import explore_graph
+
+        result = explore_graph(note_name="test-note")
+        assert "Unresolved conflicts" not in result
 
     def test_resolve_note_no_vault(self, mock_sync, mock_get_engine, mock_engine):
         mock_get_engine.return_value = mock_engine

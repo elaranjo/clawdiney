@@ -256,6 +256,23 @@ class BrainQueryEngine:
         vault_name = vault or self.current_vault
         return self.storage.get_related_notes(note_ref, vault_name, as_of=as_of)
 
+    def get_conflicts_for_rows(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Unresolved conflicts touching any of the given rows' note paths
+        (deduplicated by vault+path)."""
+        seen: set[tuple[str, str]] = set()
+        conflicts: list[dict[str, Any]] = []
+        for row in rows:
+            vault_source = row.get("vault", self.current_vault)
+            path = row["path"]
+            key = (vault_source, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            conflicts.extend(self.storage.get_conflicts(vault_source, path))
+        return conflicts
+
     # ------------------------------------------------------------------
     # Hybrid search
     # ------------------------------------------------------------------
@@ -363,6 +380,15 @@ class BrainQueryEngine:
             use_rerank=use_rerank,
             vault_override=vault_override,
         )
+        return self.build_context(rows, expand_graph, as_of=as_of)
+
+    def build_context(
+        self, rows: list[dict[str, Any]], expand_graph: bool, as_of: str | None = None
+    ) -> str:
+        """Public entry point for callers (e.g. MCP tools) that already have
+        rows from `retrieve()` and want the formatted briefing without
+        re-running retrieval — e.g. to also inspect rows for conflicts via
+        `get_conflicts_for_rows()`."""
         return self._build_context(rows, expand_graph, as_of=as_of)
 
     def _build_context(
