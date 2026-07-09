@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "elaranjo", email = "elaranjo@users.noreply.github.com"}
 ]
+keywords = ["obsidian", "rag", "mcp", "knowledge-graph", "ai-agents", "claude"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -42,6 +43,11 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/elaranjo/clawdiney"
+Repository = "https://github.com/elaranjo/clawdiney"
+Issues = "https://github.com/elaranjo/clawdiney/issues"
 
 [project.scripts]
 clawdiney-index = "clawdiney.indexer:main"
