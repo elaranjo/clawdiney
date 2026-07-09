@@ -129,7 +129,7 @@ When you call any MCP tool without specifying `vault=`, Clawdiney inspects your 
 | Your CWD | Detected Vault |
 |---|---|
 | `~/projetos/Budget/` | `Budget` |
-| `~/projetos/OnflyApi/src/` | `OnflyApi` |
+| `~/projetos/MyCompanyApi/src/` | `MyCompanyApi` |
 | `~/projetos/Budget-SDK/` | `Budget-SDK` |
 | `/any/other/directory` | `general` (fallback) |
 
@@ -327,7 +327,7 @@ If MCP is not available, use the direct script:
 ┌─────────────────────────────────────────────────────────┐
 │              VAULTS_DIR (~/clawdiney-vaults/)            │
 │                                                         │
-│  general/ (Onfly ecosystem)  clawdiney/ (this project)  │
+│  general/ (personal vault)   clawdiney/ (this project)  │
 │  Each vault has: clawdiney.toml + P.A.R.A. structure    │
 └─────────────────────────────────────────────────────────┘
 ```
