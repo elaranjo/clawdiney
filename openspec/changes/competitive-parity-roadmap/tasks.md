@@ -21,14 +21,14 @@
 
 ## 3. Temporal facts
 
-- [ ] 3.1 Design schema migration: add `valid_at`, `invalidated_at` to `entities` and `relations`, bump schema_version
-- [ ] 3.2 Implement migration in `storage.py` with backfill (`valid_at` = existing row creation time, `invalidated_at` NULL) and idempotency check
-- [ ] 3.3 Add migration test against a pre-migration fixture `brain.db`
-- [ ] 3.4 Update write paths (indexer, incremental_indexer, memory-auto-write) to set `valid_at` on insert and `invalidated_at` on supersede instead of overwriting rows
-- [ ] 3.5 Add `as_of` optional parameter to `get_related_notes`, multi-hop traversal, and hybrid search graph joins
-- [ ] 3.6 Default (no `as_of`) path filters to `invalidated_at IS NULL`, preserving current behavior
-- [ ] 3.7 Add tests: current-fact default query, historical `as_of` query, supersede-creates-new-row behavior
-- [ ] 3.8 Re-run eval harness to confirm parity with pre-migration baseline
+- [x] 3.1 Design schema migration: add `valid_at`, `invalidated_at` to `entities` and `relations`, bump schema_version
+- [x] 3.2 Implement migration in `storage.py` with backfill (`valid_at` = migration time — no prior per-row timestamp existed to recover — `invalidated_at` NULL) and idempotency check
+- [x] 3.3 Add migration test against a pre-migration fixture `brain.db`
+- [x] 3.4 Update write paths to set `valid_at` on insert; supersede semantics (invalidate old row + insert new) implemented for the semantic/LLM relations layer (`replace_project_relations`), where facts genuinely change value. WikiLink/tag relations and `memory-auto-write`'s entity row stay on stamp-on-insert only — they're derived structure / stable identity, not asserted facts subject to value supersede (see storage.py docstrings)
+- [x] 3.5 Add `as_of` optional parameter to `get_related_notes`, multi-hop traversal (`expand_neighborhood`, `find_paths`), and hybrid search graph expansion (`BrainQueryEngine.query`/`_build_context`)
+- [x] 3.6 Default (no `as_of`) path filters to `invalidated_at IS NULL`, preserving current behavior
+- [x] 3.7 Add tests: current-fact default query, historical `as_of` query, supersede-creates-new-row behavior
+- [x] 3.8 Re-run eval harness to confirm parity with pre-migration baseline
 
 ## 4. Conflict resolution
 

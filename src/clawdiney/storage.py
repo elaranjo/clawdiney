@@ -16,6 +16,7 @@ import re
 import sqlite3
 import struct
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ from .config import Config
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Graph relation types
 REL_LINKS_TO = "LINKS_TO"
@@ -160,6 +161,10 @@ class BrainStorage:
                 self._validate_meta()
                 if version < 2:
                     self._migrate_v1_to_v2(conn)
+                    version = 2
+                if version < 3:
+                    self._migrate_v2_to_v3(conn)
+                    version = 3
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
         """Additive migration: entity_vectors table for entity resolution."""
@@ -174,6 +179,74 @@ class BrainStorage:
             )
             conn.execute("PRAGMA user_version = 2")
         logger.info("Migrated brain.db schema v1 -> v2 (entity_vectors)")
+
+    def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
+        """
+        Bi-temporal fact tracking: valid_at/invalidated_at on entities and
+        relations. Existing rows are backfilled as currently-valid facts
+        (valid_at = migration time, invalidated_at = NULL) since no prior
+        per-row timestamp existed to recover.
+
+        `relations` is rebuilt to replace its blanket UNIQUE(source_id,
+        target_id, rel_type) with a partial unique index scoped to current
+        rows (invalidated_at IS NULL), so a superseded fact and its
+        replacement can coexist as distinct rows — the UNIQUE constraint
+        can't be altered in place in SQLite, hence the rebuild.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            with conn:
+                existing_cols = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(entities)")
+                }
+                if "valid_at" not in existing_cols:
+                    conn.execute("ALTER TABLE entities ADD COLUMN valid_at TEXT")
+                if "invalidated_at" not in existing_cols:
+                    conn.execute("ALTER TABLE entities ADD COLUMN invalidated_at TEXT")
+                conn.execute(
+                    "UPDATE entities SET valid_at = ? WHERE valid_at IS NULL", (now,)
+                )
+
+                conn.execute(
+                    """
+                    CREATE TABLE relations_new (
+                        id INTEGER PRIMARY KEY,
+                        source_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                        target_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                        rel_type TEXT NOT NULL,
+                        evidence_chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
+                        confidence REAL NOT NULL DEFAULT 1.0,
+                        valid_at TEXT,
+                        invalidated_at TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO relations_new (id, source_id, target_id, rel_type, "
+                    "evidence_chunk_id, confidence, valid_at, invalidated_at) "
+                    "SELECT id, source_id, target_id, rel_type, evidence_chunk_id, "
+                    "confidence, ?, NULL FROM relations",
+                    (now,),
+                )
+                conn.execute("DROP TABLE relations")
+                conn.execute("ALTER TABLE relations_new RENAME TO relations")
+                conn.execute(
+                    "CREATE UNIQUE INDEX idx_relations_current_unique ON relations"
+                    "(source_id, target_id, rel_type) WHERE invalidated_at IS NULL"
+                )
+                conn.execute(
+                    "CREATE INDEX idx_relations_source ON relations(source_id)"
+                )
+                conn.execute(
+                    "CREATE INDEX idx_relations_target ON relations(target_id)"
+                )
+                conn.execute("PRAGMA user_version = 3")
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
+        logger.info(
+            "Migrated brain.db schema v2 -> v3 (bi-temporal entities/relations)"
+        )
 
     def _validate_meta(self) -> None:
         stored_model = self._get_meta("embedding_model")
@@ -240,6 +313,8 @@ CREATE TABLE entities (
     kind TEXT NOT NULL,
     path TEXT,
     description TEXT,
+    valid_at TEXT,
+    invalidated_at TEXT,
     UNIQUE(vault, name, kind)
 );
 CREATE INDEX idx_entities_path ON entities(vault, path);
@@ -251,8 +326,11 @@ CREATE TABLE relations (
     rel_type TEXT NOT NULL,
     evidence_chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
     confidence REAL NOT NULL DEFAULT 1.0,
-    UNIQUE(source_id, target_id, rel_type)
+    valid_at TEXT,
+    invalidated_at TEXT
 );
+CREATE UNIQUE INDEX idx_relations_current_unique ON relations
+(source_id, target_id, rel_type) WHERE invalidated_at IS NULL;
 CREATE INDEX idx_relations_source ON relations(source_id);
 CREATE INDEX idx_relations_target ON relations(target_id);
 
@@ -375,14 +453,19 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         path: str | None = None,
         description: str | None = None,
     ) -> int:
+        """Get-or-create an entity row. On conflict, only path/description
+        refresh — valid_at is set once, at first creation, and never touched
+        by this refresh path (an entity's identity isn't "superseded" the
+        way a relation's asserted fact can be)."""
+        now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
-            "INSERT INTO entities (vault, name, kind, path, description) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO entities (vault, name, kind, path, description, valid_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(vault, name, kind) DO UPDATE SET "
             "path = COALESCE(excluded.path, entities.path), "
             "description = COALESCE(excluded.description, entities.description) "
             "RETURNING id",
-            (vault, name, kind, path, description),
+            (vault, name, kind, path, description, now),
         )
         return cur.fetchone()["id"]
 
@@ -427,6 +510,11 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         wikilinks: list[str],
         tags: list[str],
     ) -> None:
+        """WikiLinks/tags mirror note content 1:1 and are fully regenerated
+        on every reindex (hard delete, no history) — they're derived
+        structure, not asserted facts, so bi-temporal tracking doesn't
+        apply here; new rows still get valid_at stamped for consistency."""
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute("DELETE FROM relations WHERE source_id = ?", (source_id,))
         for target_name in dict.fromkeys(wikilinks):
             # Target may be a path or a note name; dangling targets get path=NULL
@@ -448,16 +536,16 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
                 target_id = self._upsert_entity(conn, vault, target_name, KIND_NOTE)
             if target_id != source_id:
                 conn.execute(
-                    "INSERT OR IGNORE INTO relations (source_id, target_id, rel_type) "
-                    "VALUES (?, ?, ?)",
-                    (source_id, target_id, REL_LINKS_TO),
+                    "INSERT OR IGNORE INTO relations "
+                    "(source_id, target_id, rel_type, valid_at) VALUES (?, ?, ?, ?)",
+                    (source_id, target_id, REL_LINKS_TO, now),
                 )
         for tag in dict.fromkeys(tags):
             tag_id = self._upsert_entity(conn, vault, tag, KIND_TAG)
             conn.execute(
-                "INSERT OR IGNORE INTO relations (source_id, target_id, rel_type) "
-                "VALUES (?, ?, ?)",
-                (source_id, tag_id, REL_HAS_TAG),
+                "INSERT OR IGNORE INTO relations "
+                "(source_id, target_id, rel_type, valid_at) VALUES (?, ?, ?, ?)",
+                (source_id, tag_id, REL_HAS_TAG, now),
             )
         self._prune_orphan_tags(conn, vault)
 
@@ -528,14 +616,35 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
     # Read path: graph
     # ------------------------------------------------------------------
 
-    def get_related_notes(self, note_ref: str, vault: str) -> list[str]:
+    @staticmethod
+    def _temporal_condition(alias: str, as_of: str | None) -> str:
+        """WHERE-fragment restricting `alias` rows to those valid at as_of
+        (or currently valid when as_of is None). Assumes as_of, when not
+        None, is bound as the named parameter :as_of."""
+        if as_of is None:
+            return f"{alias}.invalidated_at IS NULL"
+        return (
+            f"{alias}.valid_at <= :as_of AND "
+            f"({alias}.invalidated_at IS NULL OR {alias}.invalidated_at > :as_of)"
+        )
+
+    def get_related_notes(
+        self, note_ref: str, vault: str, as_of: str | None = None
+    ) -> list[str]:
         """
         Notes connected to note_ref (path or name) via LINKS_TO in either
         direction or via shared tags. Returns deduplicated path-or-name list.
-        Unknown note returns [].
+        Unknown note returns []. as_of restricts to relations valid at that
+        timestamp; default (None) considers only currently-valid relations.
         """
+        cond_r = self._temporal_condition("r", as_of)
+        cond_r1 = self._temporal_condition("r1", as_of)
+        cond_r2 = self._temporal_condition("r2", as_of)
+        params: dict[str, Any] = {"vault": vault, "ref": note_ref}
+        if as_of is not None:
+            params["as_of"] = as_of
         rows = self.conn.execute(
-            """
+            f"""
             WITH me AS (
                 SELECT id FROM entities
                 WHERE vault = :vault AND kind = 'note'
@@ -544,23 +653,23 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             SELECT DISTINCT e.name, e.path FROM (
                 SELECT r.target_id AS other FROM relations r
                 JOIN me ON r.source_id = me.id
-                WHERE r.rel_type = 'LINKS_TO'
+                WHERE r.rel_type = 'LINKS_TO' AND {cond_r}
                 UNION
                 SELECT r.source_id AS other FROM relations r
                 JOIN me ON r.target_id = me.id
-                WHERE r.rel_type = 'LINKS_TO'
+                WHERE r.rel_type = 'LINKS_TO' AND {cond_r}
                 UNION
                 SELECT r2.source_id AS other
                 FROM relations r1
                 JOIN me ON r1.source_id = me.id
                 JOIN relations r2 ON r2.target_id = r1.target_id
                 WHERE r1.rel_type = 'HAS_TAG' AND r2.rel_type = 'HAS_TAG'
-                  AND r2.source_id != me.id
+                  AND r2.source_id != me.id AND {cond_r1} AND {cond_r2}
             ) related
             JOIN entities e ON e.id = related.other
             WHERE e.kind = 'note' AND e.vault = :vault
             """,
-            {"vault": vault, "ref": note_ref},
+            params,
         ).fetchall()
         return [row["path"] or row["name"] for row in rows]
 
@@ -571,17 +680,23 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         ).fetchone()
         return row["id"] if row else None
 
-    def _load_edges(self, vault: str) -> list[dict[str, Any]]:
-        """All relations between entities of a vault (undirected traversal input)."""
+    def _load_edges(self, vault: str, as_of: str | None = None) -> list[dict[str, Any]]:
+        """All relations between entities of a vault (undirected traversal
+        input). as_of restricts to relations valid at that timestamp;
+        default (None) considers only currently-valid relations."""
+        cond = self._temporal_condition("r", as_of)
+        params: dict[str, Any] = {"vault": vault}
+        if as_of is not None:
+            params["as_of"] = as_of
         rows = self.conn.execute(
-            """
+            f"""
             SELECT r.id, r.source_id, r.target_id, r.rel_type, r.confidence,
                    r.evidence_chunk_id
             FROM relations r
             JOIN entities s ON s.id = r.source_id
-            WHERE s.vault = ?
+            WHERE s.vault = :vault AND {cond}
             """,
-            (vault,),
+            params,
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -606,13 +721,14 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         return row["path"] if row else None
 
     def expand_neighborhood(
-        self, entity_name: str, vault: str, depth: int = 1
+        self, entity_name: str, vault: str, depth: int = 1, as_of: str | None = None
     ) -> list[dict[str, Any]]:
         """
         Multi-hop neighborhood expansion (undirected BFS).
         Returns [{name, path, kind, rel_type, confidence, evidence, distance}]
         at minimum distance, each entity once. Depth clamped to
-        MAX_TRAVERSAL_DEPTH.
+        MAX_TRAVERSAL_DEPTH. as_of restricts traversal to relations valid at
+        that timestamp; default (None) considers only currently-valid ones.
         """
         depth = max(1, min(depth, MAX_TRAVERSAL_DEPTH))
         start = self._find_entity_id(vault, entity_name)
@@ -620,7 +736,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             return []
 
         adjacency: dict[int, list[dict[str, Any]]] = {}
-        for edge in self._load_edges(vault):
+        for edge in self._load_edges(vault, as_of):
             adjacency.setdefault(edge["source_id"], []).append(edge)
             adjacency.setdefault(edge["target_id"], []).append(edge)
 
@@ -671,13 +787,20 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
         return results
 
     def find_paths(
-        self, vault: str, ref_a: str, ref_b: str, max_depth: int = MAX_TRAVERSAL_DEPTH
+        self,
+        vault: str,
+        ref_a: str,
+        ref_b: str,
+        max_depth: int = MAX_TRAVERSAL_DEPTH,
+        as_of: str | None = None,
     ) -> list[list[dict[str, Any]]]:
         """
         Shortest paths (up to MAX_PATHS) between two entities via BFS.
         Each path is a list of hops:
         {source, rel_type, target, source_kind, target_kind, confidence, evidence}.
         Returns [] when either entity is missing or no path within max_depth.
+        as_of restricts traversal to relations valid at that timestamp;
+        default (None) considers only currently-valid ones.
         """
         max_depth = max(1, min(max_depth, MAX_TRAVERSAL_DEPTH))
         start = self._find_entity_id(vault, ref_a)
@@ -686,7 +809,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
             return []
 
         adjacency: dict[int, list[dict[str, Any]]] = {}
-        for edge in self._load_edges(vault):
+        for edge in self._load_edges(vault, as_of):
             adjacency.setdefault(edge["source_id"], []).append(edge)
             adjacency.setdefault(edge["target_id"], []).append(edge)
 
@@ -813,47 +936,127 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
         layer: 'deterministic' (confidence == 1.0) or 'semantic' (< 1.0).
         relations: [{target_id, rel_type, confidence, evidence_chunk_id?}].
-        Returns number of relations written.
+
+        Deterministic relations mirror manifest/compose parsing 1:1 and are
+        fully regenerated each run (old rows hard-deleted, no history —
+        they're derived structure, not asserted facts). Semantic
+        (LLM-extracted) relations are genuine facts that can change between
+        runs: a current row whose confidence/evidence changed is
+        invalidated and a new current row inserted rather than overwritten
+        in place; a fact no longer asserted in this run is invalidated too.
+
+        Returns the number of relations now current in this layer's set.
         """
         if layer not in ("deterministic", "semantic"):
             raise ValueError(f"Unknown layer: {layer}")
+        now = datetime.now(timezone.utc).isoformat()
         conn = self.conn
         with conn:
             project_id = self._upsert_entity(conn, vault, project_name, KIND_PROJECT)
             if layer == "deterministic":
-                conn.execute(
-                    "DELETE FROM relations WHERE source_id = ? AND confidence = 1.0 "
-                    "AND rel_type NOT IN (?, ?)",
-                    (project_id, REL_LINKS_TO, REL_HAS_TAG),
+                written = self._replace_deterministic_relations(
+                    conn, project_id, relations, now
                 )
             else:
-                conn.execute(
-                    "DELETE FROM relations WHERE source_id = ? AND confidence < 1.0",
-                    (project_id,),
+                written = self._replace_semantic_relations(
+                    conn, project_id, relations, now
                 )
-            written = 0
-            for rel in relations:
-                confidence = float(rel["confidence"])
-                if layer == "deterministic" and confidence != 1.0:
-                    raise ValueError("deterministic layer requires confidence == 1.0")
-                if layer == "semantic" and not (0.0 < confidence < 1.0):
-                    raise ValueError("semantic layer requires 0 < confidence < 1")
-                conn.execute(
-                    "INSERT INTO relations "
-                    "(source_id, target_id, rel_type, confidence, evidence_chunk_id) "
-                    "VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(source_id, target_id, rel_type) DO UPDATE SET "
-                    "confidence = excluded.confidence, "
-                    "evidence_chunk_id = excluded.evidence_chunk_id",
-                    (
-                        project_id,
-                        rel["target_id"],
-                        rel["rel_type"],
-                        confidence,
-                        rel.get("evidence_chunk_id"),
-                    ),
-                )
+        return written
+
+    def _replace_deterministic_relations(
+        self,
+        conn: sqlite3.Connection,
+        project_id: int,
+        relations: list[dict[str, Any]],
+        now: str,
+    ) -> int:
+        conn.execute(
+            "DELETE FROM relations WHERE source_id = ? AND confidence = 1.0 "
+            "AND rel_type NOT IN (?, ?)",
+            (project_id, REL_LINKS_TO, REL_HAS_TAG),
+        )
+        written = 0
+        for rel in relations:
+            confidence = float(rel["confidence"])
+            if confidence != 1.0:
+                raise ValueError("deterministic layer requires confidence == 1.0")
+            conn.execute(
+                "INSERT INTO relations "
+                "(source_id, target_id, rel_type, confidence, evidence_chunk_id, valid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_id, target_id, rel_type) WHERE invalidated_at IS NULL "
+                "DO UPDATE SET confidence = excluded.confidence, "
+                "evidence_chunk_id = excluded.evidence_chunk_id",
+                (
+                    project_id,
+                    rel["target_id"],
+                    rel["rel_type"],
+                    confidence,
+                    rel.get("evidence_chunk_id"),
+                    now,
+                ),
+            )
+            written += 1
+        return written
+
+    def _replace_semantic_relations(
+        self,
+        conn: sqlite3.Connection,
+        project_id: int,
+        relations: list[dict[str, Any]],
+        now: str,
+    ) -> int:
+        current_rows = {
+            (row["target_id"], row["rel_type"]): row
+            for row in conn.execute(
+                "SELECT id, target_id, rel_type, confidence, evidence_chunk_id "
+                "FROM relations WHERE source_id = ? AND confidence < 1.0 "
+                "AND invalidated_at IS NULL",
+                (project_id,),
+            )
+        }
+        new_keys: set[tuple[int, str]] = set()
+        written = 0
+        for rel in relations:
+            confidence = float(rel["confidence"])
+            if not (0.0 < confidence < 1.0):
+                raise ValueError("semantic layer requires 0 < confidence < 1")
+            key = (rel["target_id"], rel["rel_type"])
+            new_keys.add(key)
+            existing = current_rows.get(key)
+            if (
+                existing
+                and existing["confidence"] == confidence
+                and existing["evidence_chunk_id"] == rel.get("evidence_chunk_id")
+            ):
                 written += 1
+                continue
+            if existing:
+                conn.execute(
+                    "UPDATE relations SET invalidated_at = ? WHERE id = ?",
+                    (now, existing["id"]),
+                )
+            conn.execute(
+                "INSERT INTO relations "
+                "(source_id, target_id, rel_type, confidence, evidence_chunk_id, valid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    project_id,
+                    rel["target_id"],
+                    rel["rel_type"],
+                    confidence,
+                    rel.get("evidence_chunk_id"),
+                    now,
+                ),
+            )
+            written += 1
+
+        for key, existing in current_rows.items():
+            if key not in new_keys:
+                conn.execute(
+                    "UPDATE relations SET invalidated_at = ? WHERE id = ?",
+                    (now, existing["id"]),
+                )
         return written
 
     # ------------------------------------------------------------------

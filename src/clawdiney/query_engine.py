@@ -245,10 +245,16 @@ class BrainQueryEngine:
     # Graph
     # ------------------------------------------------------------------
 
-    def get_related_notes(self, note_ref: str, vault: str | None = None) -> list[str]:
-        """Notes linked to note_ref via WikiLinks (either direction) or shared tags."""
+    def get_related_notes(
+        self, note_ref: str, vault: str | None = None, as_of: str | None = None
+    ) -> list[str]:
+        """Notes linked to note_ref via WikiLinks (either direction) or shared tags.
+
+        as_of restricts to relations valid at that timestamp; default (None)
+        considers only currently-valid relations.
+        """
         vault_name = vault or self.current_vault
-        return self.storage.get_related_notes(note_ref, vault_name)
+        return self.storage.get_related_notes(note_ref, vault_name, as_of=as_of)
 
     # ------------------------------------------------------------------
     # Hybrid search
@@ -346,16 +352,22 @@ class BrainQueryEngine:
         expand_graph: bool = SEARCH_EXPAND_GRAPH_DEFAULT,
         use_rerank: bool = SEARCH_USE_RERANK_DEFAULT,
         vault_override: str | None = None,
+        as_of: str | None = None,
     ) -> str:
+        """as_of restricts graph expansion (when expand_graph=True) to
+        relations valid at that timestamp; default (None) uses only
+        currently-valid relations. Chunk retrieval itself is untemporal."""
         rows = self.retrieve(
             text,
             n_results=n_results,
             use_rerank=use_rerank,
             vault_override=vault_override,
         )
-        return self._build_context(rows, expand_graph)
+        return self._build_context(rows, expand_graph, as_of=as_of)
 
-    def _build_context(self, rows: list[dict[str, Any]], expand_graph: bool) -> str:
+    def _build_context(
+        self, rows: list[dict[str, Any]], expand_graph: bool, as_of: str | None = None
+    ) -> str:
         context_briefing = []
         seen_notes = set()
 
@@ -368,7 +380,9 @@ class BrainQueryEngine:
             seen_notes.add(note_label)
 
             if expand_graph:
-                related = self.get_related_notes(note_label, vault=vault_source)
+                related = self.get_related_notes(
+                    note_label, vault=vault_source, as_of=as_of
+                )
                 for rel_note in related:
                     if rel_note not in seen_notes:
                         context_briefing.append(
