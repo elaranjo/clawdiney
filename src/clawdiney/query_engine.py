@@ -13,6 +13,8 @@ from typing import Any, TypedDict
 from .chunking import Chunk, markdown_chunking
 from .config import Config
 from .constants import (
+    ADAPTIVE_MAX_RESULTS,
+    ADAPTIVE_SCORE_RATIO,
     RRF_K,
     SEARCH_EXPAND_GRAPH_DEFAULT,
     SEARCH_N_RESULTS_DEFAULT,
@@ -61,7 +63,35 @@ def rrf_fuse(
             scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank)
             rows.setdefault(chunk_id, row)
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
-    return [rows[chunk_id] for chunk_id, _score in ordered]
+    fused = []
+    for chunk_id, score in ordered:
+        row = rows[chunk_id]
+        row["rrf_score"] = score
+        fused.append(row)
+    return fused
+
+
+def adaptive_cutoff(
+    rows: list[dict[str, Any]],
+    max_results: int = ADAPTIVE_MAX_RESULTS,
+    ratio: float = ADAPTIVE_SCORE_RATIO,
+) -> list[dict[str, Any]]:
+    """Keep rows whose RRF score holds up against the best hit.
+
+    A narrow query produces one dominant score and a steep drop-off (few rows
+    survive); a broad query produces a plateau of similar scores (more rows
+    survive). Rows missing rrf_score (single-retriever fallbacks) are kept.
+    """
+    if not rows:
+        return rows
+    # max, not rows[0]: reranking may have reordered rows since RRF fusion
+    top = max((row.get("rrf_score") or 0.0) for row in rows)
+    if not top:
+        return rows[:max_results]
+    kept = [
+        row for row in rows[:max_results] if row.get("rrf_score", top) >= top * ratio
+    ]
+    return kept or rows[:1]
 
 
 class BrainQueryEngine:
@@ -364,7 +394,13 @@ class BrainQueryEngine:
         agent_id: optional namespace scope — None/"default" applies no
         filtering; any other value scopes to that agent's data plus shared
         ("default") content (see `_resolve_agent_scope`).
+        n_results: SEARCH_N_RESULTS_AUTO (or any negative value) enables
+        adaptive mode — up to ADAPTIVE_MAX_RESULTS candidates are fetched and
+        trimmed by `adaptive_cutoff` based on RRF score drop-off.
         """
+        adaptive = n_results < 0
+        if adaptive:
+            n_results = ADAPTIVE_MAX_RESULTS
         processed_query = self.query_preprocessor.preprocess(text)
         if processed_query != text and logger.isEnabledFor(logging.DEBUG):
             logger.debug("Query preprocessed: '%s' -> '%s'", text, processed_query)
@@ -385,6 +421,8 @@ class BrainQueryEngine:
             reranked = get_reranker().rerank(processed_query, pairs)
             rows = [meta for _doc, meta in reranked]
 
+        if adaptive:
+            return adaptive_cutoff(rows)
         return rows[:n_results]
 
     def query(
