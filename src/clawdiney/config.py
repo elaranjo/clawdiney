@@ -161,6 +161,7 @@ class Config:
     EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
     EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
+    RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 
     # Project knowledge graph
     CARD_LLM_MODEL = os.getenv("CARD_LLM_MODEL", "qwen3")

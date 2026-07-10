@@ -52,11 +52,11 @@
 
 ## 6. Configurable reranker
 
-- [ ] 6.1 Add `RERANK_MODEL` config value to `config.py` (default `BAAI/bge-reranker-v2-m3`)
-- [ ] 6.2 Update `reranker.py` to load model name from config instead of hardcoded constant
-- [ ] 6.3 Add test: default model unchanged when `RERANK_MODEL` unset, alternate model loads when set
-- [ ] 6.4 Run eval harness with at least one alternate cross-encoder model to document latency/precision trade-off
-- [ ] 6.5 Document trade-offs (default, faster alternative, rerank-disabled) in config reference docs
+- [x] 6.1 Add `RERANK_MODEL` config value to `config.py` (default `BAAI/bge-reranker-v2-m3`)
+- [x] 6.2 Update `reranker.py` to load model name from config instead of hardcoded constant (added `reset_reranker()` for test isolation of the process-wide singleton)
+- [x] 6.3 Add test: default model unchanged when `RERANK_MODEL` unset, alternate model loads when set
+- [x] 6.4 Run eval harness with at least one alternate cross-encoder model to document latency/precision trade-off (`cross-encoder/ms-marco-MiniLM-L-6-v2`: ~4s/query vs ~10s/query for the default on this CPU-fallback environment; identical recall/MRR/hit-rate on the small fixture — numbers only show latency delta, not precision on a harder vault)
+- [x] 6.5 Document trade-offs (default, faster alternative, rerank-disabled) in config reference docs (README "Reranker configuration" + `.env.example`)
 
 ## 7. Positioning docs
 

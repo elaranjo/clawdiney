@@ -108,9 +108,23 @@ _reranker_instance: CrossEncoderReranker | None = None
 
 
 def get_reranker() -> CrossEncoderReranker:
+    """Process-wide singleton, model name from Config.RERANK_MODEL (default
+    unchanged: BAAI/bge-reranker-v2-m3). Changing RERANK_MODEL as the new
+    default should be validated against the eval harness first — see
+    CLAUDE.md / config reference for the latency/precision trade-off."""
     global _reranker_instance
     if _reranker_instance is None:
         with _reranker_lock:
             if _reranker_instance is None:
-                _reranker_instance = CrossEncoderReranker()
+                from .config import Config
+
+                _reranker_instance = CrossEncoderReranker(Config.RERANK_MODEL)
     return _reranker_instance
+
+
+def reset_reranker() -> None:
+    """Clear the singleton (tests only) so a changed Config.RERANK_MODEL
+    takes effect on the next get_reranker() call."""
+    global _reranker_instance
+    with _reranker_lock:
+        _reranker_instance = None

@@ -445,6 +445,24 @@ Start with the MCP `health_check()` tool — it reports `brain.db` status (path,
 - Check it's installed: `pip install clawdiney[rerank]` (adds `sentence-transformers`, ~2GB with model weights).
 - On small/shared GPUs, the reranker automatically retries on CPU if CUDA runs out of memory — check the logs for "retrying on CPU". If it still fails, set `ENABLE_RERANK=false` to skip it entirely; search still works via BM25+vector RRF fusion.
 
+### Reranker configuration
+
+`RERANK_MODEL` selects the cross-encoder (default `BAAI/bge-reranker-v2-m3`, ~568M params). Any `sentence-transformers`-compatible cross-encoder works — e.g. a smaller/faster one:
+
+```bash
+RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+```
+
+Measured with `clawdiney-eval --mode hybrid --rerank` against the fixture vault (CPU fallback, 8 queries, warm model):
+
+| Model | Params | Wall time (8 queries) | recall@5 / MRR / hit_rate |
+|---|---|---|---|
+| `BAAI/bge-reranker-v2-m3` (default) | ~568M | ~80s (~10s/query) | 1.00 / 1.00 / 1.00 |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | ~22M | ~30s (~4s/query) | 1.00 / 1.00 / 1.00 |
+| *(rerank disabled)* | — | fastest, RRF order only | run `--no-rerank` to measure on your own vault |
+
+On this small fixture both models score identically, so the numbers only show the latency delta — they don't prove the smaller model preserves precision on a larger, harder vault. Before adopting a non-default `RERANK_MODEL`, re-run `clawdiney-eval --all-modes` against your own vault (or an expanded golden set) and compare against the current baseline (`tests/eval/baseline.json`) rather than trusting these numbers directly.
+
 ### Ollama connection error
 - Confirm Ollama is running: `ollama list`. Start it with `ollama serve` if not.
 - Confirm the embedding model is pulled: `ollama pull bge-m3`.

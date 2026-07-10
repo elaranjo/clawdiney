@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from clawdiney.reranker import CrossEncoderReranker
+from clawdiney.reranker import CrossEncoderReranker, get_reranker, reset_reranker
 
 
 def _results(n):
@@ -68,3 +68,29 @@ class TestEngineIntegration:
             engine.query("anything", expand_graph=False)
             get_rr.assert_not_called()
         storage.close()
+
+
+class TestConfigurableModel:
+    def test_default_model_unchanged_when_unset(self, monkeypatch):
+        reset_reranker()
+        monkeypatch.delenv("RERANK_MODEL", raising=False)
+        monkeypatch.setattr(
+            "clawdiney.config.Config.RERANK_MODEL", "BAAI/bge-reranker-v2-m3"
+        )
+        rr = get_reranker()
+        assert rr.model_name == "BAAI/bge-reranker-v2-m3"
+        reset_reranker()
+
+    def test_alternate_model_loads_when_configured(self, monkeypatch):
+        reset_reranker()
+        monkeypatch.setattr(
+            "clawdiney.config.Config.RERANK_MODEL",
+            "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        )
+        rr = get_reranker()
+        assert rr.model_name == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        reset_reranker()
+
+    def test_reranker_uses_configured_model_name_directly(self):
+        rr = CrossEncoderReranker("some/other-model")
+        assert rr.model_name == "some/other-model"
