@@ -60,8 +60,8 @@
 
 ## 7. Positioning docs
 
-- [ ] 7.1 Collect final eval harness numbers across all modes (hybrid vs BM25-only vs vector-only, rerank on/off, model variants)
-- [ ] 7.2 Rewrite README section contrasting embedded-SQLite footprint vs Neo4j+Chroma+Redis-style peer stacks
-- [ ] 7.3 Add eval harness results summary/table to README or a dedicated `BENCHMARKS.md`
-- [ ] 7.4 Update `CLAUDE.md` with new capabilities (write_memory, temporal facts, conflict resolution, agent namespacing, configurable reranker, eval harness)
-- [ ] 7.5 Update MCP tool integration docs with new optional parameters (`agent_id`, `as_of`, `conflicts` field, `write_memory`)
+- [x] 7.1 Collect final eval harness numbers across all modes (hybrid vs BM25-only vs vector-only, rerank on/off, model variants) — recorded in `BENCHMARKS.md`, with an explicit caveat that the small fixture scores every mode at 1.0 and doesn't yet demonstrate hybrid/rerank's marginal contribution (needs a harder golden set, tracked as an open item rather than glossed over)
+- [x] 7.2 Add README section ("Why Embedded SQLite Instead of a Service Stack") contrasting footprint vs Neo4j+graph-DB+cache-style peer stacks, with an explicit trade-off caveat (single-writer, no horizontal scaling)
+- [x] 7.3 Add eval harness results summary/table to a dedicated `BENCHMARKS.md` (retrieval-by-mode table + reranker model comparison + the embedded-vs-peers table), linked from README
+- [x] 7.4 Update `CLAUDE.md` with new capabilities: retrieval eval harness, memory auto-write, bi-temporal fact tracking, conflict detection & resolution, agent namespacing, configurable reranker (new "Recent Improvements" subsections, plus Architecture/Project Structure/Key Files updates)
+- [x] 7.5 Update MCP tool integration docs (README + CLAUDE.md) with new optional parameters: `agent_id` on `search_brain`/`explore_graph`/`how_do_projects_relate`, the "Unresolved conflicts" response section, and the new `write_memory` tool. `as_of` is documented as a `query_engine`/`storage` API parameter only — it is intentionally not exposed through any MCP tool in this implementation

@@ -8,14 +8,14 @@ Clawdiney is a hybrid Vector + Graph system that transforms an Obsidian Vault in
 
 ## Architecture
 
-The system is fully embedded (v0.2.0) — a single SQLite database (`brain.db`) holds everything:
+The system is fully embedded (v0.2.0) — a single SQLite database (`brain.db`, schema v5) holds everything:
 
 1. **sqlite-vec** - Vector KNN search (embeddings via Ollama `bge-m3`)
 2. **FTS5** - BM25 full-text search (exact terms, acronyms, identifiers)
-3. **Graph tables** (`entities`, `relations`) - Note relationships via WikiLinks and shared tags
-4. **MCP Server** - Provides retrieval-first integration via Model Context Protocol
+3. **Graph tables** (`entities`, `relations`) - Note relationships via WikiLinks and shared tags, bi-temporal (`valid_at`/`invalidated_at`) with conflict tracking (`is_conflict`, `CONTRADICTS`) for the LLM-extracted semantic layer, and per-agent namespaced (`agent_id`, default `"default"`)
+4. **MCP Server** - Provides retrieval-first integration via Model Context Protocol, plus a `write_memory` tool for agent-written memory
 
-Search is hybrid: BM25 + vector results fused with Reciprocal Rank Fusion (k=60), optionally reranked by a cross-encoder (`BAAI/bge-reranker-v2-m3`, optional extra `clawdiney[rerank]`).
+Search is hybrid: BM25 + vector results fused with Reciprocal Rank Fusion (k=60), optionally reranked by a cross-encoder (default `BAAI/bge-reranker-v2-m3`, configurable via `RERANK_MODEL`, optional extra `clawdiney[rerank]`).
 
 Data flow:
 Obsidian Vault → `src/clawdiney/indexer.py` → `brain.db` (via `storage.py`) → `src/clawdiney/mcp_server.py` → MCP client
@@ -34,6 +34,7 @@ clawdiney/
 │   ├── reranker.py           # Cross-encoder reranking (optional extra)
 │   ├── embedding_providers.py # EmbeddingProvider protocol (Ollama/OpenAI)
 │   ├── vault_writer.py       # Thread-safe write operations
+│   ├── memory_writer.py      # write_memory: fact normalization + agent-scoped entity resolution
 │   ├── mcp_server.py         # MCP server for AI agents
 │   ├── config.py             # Configuration management
 │   ├── chunking.py           # Text chunking strategies
@@ -42,14 +43,17 @@ clawdiney/
 │   ├── rag_optimizer.py      # Query preprocessing
 │   ├── constants.py          # Application constants
 │   ├── logging_config.py     # Logging setup
+│   ├── eval/                 # Retrieval eval harness (recall@k/MRR/hit-rate, clawdiney-eval CLI)
 │   └── scripts/
 │       ├── watch_vault.py    # File watcher for real-time sync
 │       ├── sync_vault.py     # Manual sync script
 │       └── index_projects.py # CLI: index projects to Obsidian
 ├── tests/                    # Test suite (pytest)
+├── tests/eval/                # Eval harness fixture vault, golden queries, baseline
 ├── scripts/                  # Shell scripts
 ├── docker/                   # Docker configuration
 ├── SECURITY_REVIEW.md        # Security audit documentation
+├── BENCHMARKS.md              # Retrieval eval numbers and reranker latency/precision trade-offs
 └── pyproject.toml            # Python project configuration
 ```
 
@@ -77,6 +81,11 @@ Test queries from command line:
 Or directly with Python:
 ```bash
 ./venv/bin/python3 -m clawdiney.query_engine "your query here"
+```
+
+Run the retrieval eval harness (recall@k / MRR / hit-rate against a fixture vault, regression-gated against `tests/eval/baseline.json`; requires Ollama running):
+```bash
+./venv/bin/clawdiney-eval --all-modes
 ```
 
 ### Project Indexer (New!)
@@ -184,8 +193,10 @@ Use the MCP `health_check` tool (or open `brain.db` with any SQLite client) for 
 - `src/clawdiney/reranker.py` - Cross-encoder reranker (lazy-loaded, optional extra)
 - `src/clawdiney/embedding_providers.py` - EmbeddingProvider protocol; Ollama (`ollama.embed`) default
 - `src/clawdiney/vault_writer.py` - Thread-safe vault write operations
+- `src/clawdiney/memory_writer.py` - `write_memory`: normalizes a fact into subject/predicate/value, resolves the subject against agent-scoped entities, upserts into a provenance-marked `40_Memory/` note
 - `src/clawdiney/project_indexer.py` - Analyzes codebases and generates Obsidian docs
 - `src/clawdiney/project_index_config.py` - Selective file indexing patterns (include/exclude)
+- `src/clawdiney/eval/` - Retrieval eval harness: `metrics.py` (recall@k/MRR/hit-rate), `harness.py` (fixture indexing + scoring), `cli.py` (`clawdiney-eval`)
 
 ### Supporting Modules
 - `src/clawdiney/config.py` - Centralized configuration management (`BRAIN_DB_PATH`, `EMBEDDING_PROVIDER`, `EMBEDDING_DIMENSION`)
@@ -203,23 +214,28 @@ Use the MCP `health_check` tool (or open `brain.db` with any SQLite client) for 
 - `SECURITY_REVIEW.md` - Security audit and best practices
 - `CLAUDE.md` - This file (development guide)
 - `README.md` - User-facing documentation
+- `BENCHMARKS.md` - Retrieval eval numbers (recall@k/MRR/hit-rate per mode) and reranker model latency/precision trade-offs
 
 ## Integration
 
 The system integrates with MCP clients. When properly configured, the agent should use these tools:
 
-1. `search_brain(query)` - Search for architectural patterns, SOPs, and design system components
-2. `explore_graph(note_name)` - Find related entities (notes, projects, libraries, patterns) with typed relations and evidence
+1. `search_brain(query, vault?, agent_id?)` - Search for architectural patterns, SOPs, and design system components. `agent_id` (optional) also includes that agent's own memory (see `write_memory`) alongside shared content; the response appends an "Unresolved conflicts" section when returned notes touch a contradicted fact
+2. `explore_graph(note_name, vault?, agent_id?)` - Find related entities (notes, projects, libraries, patterns) with typed relations and evidence; same `agent_id` scoping and conflict surfacing as `search_brain`
 3. `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 4. `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
 5. `get_project_card(name)` - Full project card (Purpose, Stack, Architecture, Interfaces) — first call when touching an unfamiliar project
-6. `how_do_projects_relate(a, b)` - Graph paths between two projects (shared libraries, datastores, patterns) with evidence
+6. `how_do_projects_relate(a, b, vault?, agent_id="*")` - Graph paths between two projects (shared libraries, datastores, patterns) with evidence. `agent_id="*"` (default) applies no filtering; pass a specific id for an explicit cross-namespace opt-in
+7. `write_memory(fact, source, agent_id="default", vault?)` - Persist a natural-language fact (ideally `"<Subject> <verb> <value>"`) as agent-written memory. This is the only tool that turns conversation/agent knowledge into vault content — read tools never write as a side effect
 
 The intended workflow is:
 - use `search_brain` first
 - use `resolve_note` when a note name is ambiguous
 - use `get_note_chunks` for structured drill-down
 - read the full file directly from the vault or repository when needed
+- use `write_memory` to persist a fact learned during the conversation for future sessions
+
+Note: `resolve_note`, `get_note_chunks`, and `get_project_card` resolve notes via filesystem glob over the vault, not the `documents`/`entities` tables — they have no `agent_id` parameter since there's no per-agent data to filter there.
 
 Configuration example in `~/.claude.json`:
 ```json
@@ -275,3 +291,33 @@ Configuration example in `~/.claude.json`:
 - **Entity resolution**: embedding similarity over `entity_vectors` (threshold `ENTITY_RESOLUTION_THRESHOLD`, default 0.85) prevents duplicates
 - Layers never clobber each other (re-extraction replaces only its own layer)
 - Runs automatically after `index_projects` / project watcher reindex
+
+### Retrieval Eval Harness (v0.3.x)
+- `clawdiney-eval` CLI scores retrieval quality (recall@k, MRR, hit rate) against a fixture vault (`tests/eval/fixture_vault/`, decoupled from the user's live vault) and a golden-query set (`tests/eval/golden_queries.jsonl`)
+- Modes: hybrid / BM25-only / vector-only, rerank on/off — isolates each retrieval component's contribution
+- `--update-baseline` records `tests/eval/baseline.json`; default run exits non-zero on regression beyond `--tolerance` (default 0.05)
+- See `BENCHMARKS.md` for current numbers and the reranker model comparison
+
+### Memory Auto-Write (v0.3.x)
+- `write_memory` MCP tool (`memory_writer.py`): the only entry point that turns agent/conversation text into vault content — read tools (`search_brain`, `explore_graph`, ...) never write as a side effect
+- Normalizes `"<Subject> <verb> <value>"` into subject/predicate/value (heuristic regex match on known verbs; confidence 1.0 on match, 0.4 fallback); rejects writes below `MEMORY_MIN_CONFIDENCE` (default 0.3)
+- Subject resolved against existing entities via the same embedding-similarity threshold as the project knowledge graph; writes to a provenance-marked `40_Memory/<Subject>.md` note (one note per resolved subject, one bullet per predicate); a duplicate fact is a no-op, a changed value updates the bullet in place
+
+### Bi-Temporal Fact Tracking (v0.3.x, schema v3)
+- `entities`/`relations` carry `valid_at`/`invalidated_at`; a row with `invalidated_at IS NULL` is the current fact
+- Supersede semantics (invalidate old row, insert new) apply to the semantic/LLM relations layer (`replace_project_relations`), where facts genuinely change value between extraction runs — WikiLink/tag relations stay hard-delete-and-reinsert since they mirror file content 1:1 (derived structure, not asserted facts)
+- `get_related_notes`, `expand_neighborhood`, `find_paths`, and `BrainQueryEngine.query`'s graph expansion accept an optional `as_of` timestamp for historical queries; default (no `as_of`) considers only currently-valid facts — not currently exposed through any MCP tool
+
+### Conflict Detection & Resolution (v0.3.x, schema v4)
+- `entities`/`relations` carry `is_conflict`; a `CONTRADICTS` relation links two entities asserted as contradictory values for the same (source, rel_type) slot
+- Detected in the semantic relations layer: when a slot is reasserted with a different target within one extraction run, both facts stay current (flagged, not invalidated) instead of one silently overwriting the other
+- `BrainStorage.get_conflicts`/`resolve_conflict` read/resolve; `search_brain`/`explore_graph` MCP responses append an "Unresolved conflicts" section when relevant
+
+### Agent Namespacing (v0.3.x, schema v5)
+- `documents`/`entities` carry `agent_id` (default `"default"`); `entities`' uniqueness widened to `(vault, agent_id, name, kind)` so different agents can have same-named entities without colliding
+- Write path (`indexer` → `IncrementalIndexer` → `VaultWriter` → `memory_writer`) threads `agent_id` end to end; non-default agents' memory notes land in their own `40_Memory/<agent_id>/` subfolder
+- `search_brain`/`explore_graph` accept optional `agent_id`, scoping to that agent's data plus shared (`"default"`) content; `how_do_projects_relate` requires an explicit `agent_id` opt-in for cross-namespace graph queries (currently a no-op since project/dependency entities aren't agent-scoped)
+
+### Configurable Reranker (v0.3.x)
+- `RERANK_MODEL` (default `BAAI/bge-reranker-v2-m3`, unchanged) selects any `sentence-transformers`-compatible cross-encoder without code changes
+- See `BENCHMARKS.md` for the measured latency delta of a smaller alternative (`cross-encoder/ms-marco-MiniLM-L-6-v2`) — validate any non-default model against the eval harness before adopting it as the new default
