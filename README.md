@@ -11,7 +11,7 @@
 A hybrid **Vector + Graph** system that transforms your Obsidian vaults into a living knowledge source for AI coding agents.
 
 <p align="center">
-  <img src="assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
+  <img src="https://raw.githubusercontent.com/elaranjo/clawdiney/main/assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
 </p>
 
 ---
@@ -251,6 +251,37 @@ Restart the client session after registering — MCP config is read once at sess
 
 ---
 
+## 🔍 Proactive Context Hook (Optional)
+
+`scripts/claude_hook_context.py` is a Claude Code `UserPromptSubmit` hook: it runs `search_brain`-equivalent retrieval before every prompt and injects the results as context automatically, so relevant SOPs/patterns surface even if the agent doesn't think to search for them.
+
+**Install** — add to `~/.claude/settings.json` under `hooks.UserPromptSubmit`:
+
+```json
+{
+  "hooks": [
+    {
+      "type": "command",
+      "command": "/path/to/clawdiney/venv/bin/python3 /path/to/clawdiney/scripts/claude_hook_context.py",
+      "timeout": 10,
+      "statusMessage": "Querying clawdiney brain..."
+    }
+  ]
+}
+```
+
+**Controlling how many sources it injects** (default: 3; 0 disables it entirely):
+
+| Scope | How |
+|---|---|
+| Session | `export CLAWDINEY_HOOK_N_RESULTS=8` before starting Claude Code — applies to every prompt in that shell |
+| Single prompt | Add `@nN` anywhere in the prompt text, e.g. `explain the auth flow @n8` — the marker is stripped before the search runs and only affects that one prompt |
+| Disable | `CLAWDINEY_HOOK_N_RESULTS=0` (session) or `@n0` (one prompt) |
+
+Precedence: inline `@nN` marker > `CLAWDINEY_HOOK_N_RESULTS` > default (3).
+
+---
+
 ## 🚀 Usage
 
 ### Ensure Ollama Is Running
@@ -274,7 +305,7 @@ With MCP configured, the agent has access to **read and write** tools:
 
 #### Read Tools (Discovery)
 
-- `search_brain(query, vault?, agent_id?)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components. `agent_id` (optional) also searches that agent's own memory (see `write_memory` below) alongside shared vault content; results append an "Unresolved conflicts" section when a returned note touches a contradicted fact
+- `search_brain(query, vault?, agent_id?, n_results?)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components. `agent_id` (optional) also searches that agent's own memory (see `write_memory` below) alongside shared vault content; results append an "Unresolved conflicts" section when a returned note touches a contradicted fact. `n_results` (optional, default 3) sets how many results to retrieve; `n_results=0` explicitly skips the search instead of returning a real (possibly empty) result set
 - `explore_graph(note_name, vault?, agent_id?)` - Find entities related to a note or project — notes, WikiLinks, tags, or (for projects) dependencies/patterns — with relation type and evidence. Same `agent_id` scoping and conflict surfacing as `search_brain`
 - `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 - `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note

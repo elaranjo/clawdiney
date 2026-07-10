@@ -81,7 +81,7 @@ def main() -> int:
     config_path.write_text(json.dumps(updated, indent=2, ensure_ascii=False) + "\n")
 
     print(f"✅ Backup saved to {backup_path}")
-    print(f"✅ Registered clawdiney MCP server under projects[\"{project_key}\"]")
+    print(f'✅ Registered clawdiney MCP server under projects["{project_key}"]')
     print("   Restart Claude Code sessions in that directory for it to take effect.")
     return 0
 

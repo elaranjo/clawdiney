@@ -91,6 +91,43 @@ class TestSearchTools:
         assert "Mocked search results" in result
         mock_get_engine.assert_called_once_with(vault="projects")
 
+    def test_search_brain_default_n_results_unchanged(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        from clawdiney.constants import SEARCH_N_RESULTS_DEFAULT
+        from clawdiney.mcp_server import search_brain
+
+        search_brain(query="test query")
+        mock_engine.retrieve.assert_called_once_with(
+            "test query",
+            vault_override=None,
+            agent_id=None,
+            n_results=SEARCH_N_RESULTS_DEFAULT,
+        )
+
+    def test_search_brain_explicit_n_results_respected(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        from clawdiney.mcp_server import search_brain
+
+        search_brain(query="test query", n_results=10)
+        mock_engine.retrieve.assert_called_once_with(
+            "test query", vault_override=None, agent_id=None, n_results=10
+        )
+
+    def test_search_brain_zero_skips_retrieval(
+        self, mock_sync, mock_get_engine, mock_engine
+    ):
+        mock_get_engine.return_value = mock_engine
+        from clawdiney.mcp_server import search_brain
+
+        result = search_brain(query="test query", n_results=0)
+        mock_get_engine.assert_not_called()
+        assert "0 results requested" in result
+        assert "no search performed" in result
+
     def test_explore_graph_no_vault(self, mock_sync, mock_get_engine, mock_engine):
         mock_get_engine.return_value = mock_engine
         from clawdiney.mcp_server import explore_graph
