@@ -22,9 +22,9 @@
 ## 4. Docs
 
 - [x] 4.1 Document `CLAWDINEY_HOOK_N_RESULTS` and the `@nN` marker in README's hook-setup section (near the existing proactive-hook install instructions, if present) and in `scripts/claude_hook_context.py`'s docstring
-- [ ] 4.2 Document `search_brain`'s new `n_results` parameter in README's Read Tools list and CLAUDE.md's Integration section
+- [x] 4.2 Document `search_brain`'s new `n_results` parameter in README's Read Tools list and CLAUDE.md's Integration section
 
 ## 5. Verification
 
-- [ ] 5.1 Run full test suite (`./venv/bin/python3 -m pytest tests/ -v`) and ruff (`./venv/bin/ruff check src/clawdiney/ tests/`)
-- [ ] 5.2 Manually exercise the hook end-to-end (real `BrainQueryEngine`, real vault) for at least one non-default case to confirm it works outside of mocks
+- [x] 5.1 Run full test suite (`./venv/bin/python3 -m pytest tests/ -v`) and ruff (`./venv/bin/ruff check src/clawdiney/ tests/`)
+- [x] 5.2 Manually exercise the hook end-to-end (real `BrainQueryEngine`, real vault) for at least one non-default case to confirm it works outside of mocks — covered by task 2.6's manual runs (env var, marker, precedence, zero) against the real vault/Ollama, no mocks

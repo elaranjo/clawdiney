@@ -305,7 +305,7 @@ With MCP configured, the agent has access to **read and write** tools:
 
 #### Read Tools (Discovery)
 
-- `search_brain(query, vault?, agent_id?)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components. `agent_id` (optional) also searches that agent's own memory (see `write_memory` below) alongside shared vault content; results append an "Unresolved conflicts" section when a returned note touches a contradicted fact
+- `search_brain(query, vault?, agent_id?, n_results?)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components. `agent_id` (optional) also searches that agent's own memory (see `write_memory` below) alongside shared vault content; results append an "Unresolved conflicts" section when a returned note touches a contradicted fact. `n_results` (optional, default 3) sets how many results to retrieve; `n_results=0` explicitly skips the search instead of returning a real (possibly empty) result set
 - `explore_graph(note_name, vault?, agent_id?)` - Find entities related to a note or project — notes, WikiLinks, tags, or (for projects) dependencies/patterns — with relation type and evidence. Same `agent_id` scoping and conflict surfacing as `search_brain`
 - `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 - `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note

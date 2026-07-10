@@ -121,8 +121,7 @@ def main() -> None:
     n_sources = result.count("--- Source")
     context_text = (
         "[clawdiney: contexto recuperado proativamente para este prompt — "
-        "use search_brain/explore_graph/get_project_card para aprofundar]\n\n"
-        + result
+        "use search_brain/explore_graph/get_project_card para aprofundar]\n\n" + result
     )
     requested_note = (
         f" (n_results={n_results})" if n_results != DEFAULT_N_RESULTS else ""
