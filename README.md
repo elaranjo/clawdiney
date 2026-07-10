@@ -29,8 +29,26 @@ Core capabilities:
 - **Knowledge Graph:** Maps relationships between notes via `[[WikiLinks]]` and shared tags
 - **Linking & Fallback:** Vaults can link to related vaults (e.g., SDK projects link to their parent project). Searches cascade through the chain: current vault → linked vaults → general
 - **Native Integration:** Connects to MCP-compatible agents (OpenCode, Claude Code, etc.) via SSE or stdio
+- **Agent-Written Memory:** `write_memory` turns conversational facts into provenance-marked, searchable notes — resolved against existing entities, deduped, and optionally namespaced per agent (`agent_id`)
+- **Bi-Temporal Facts & Conflict Detection:** Graph facts carry validity windows; when an LLM-extracted fact genuinely changes value, both versions are kept and flagged rather than one silently overwriting the other
+- **Measured, Not Assumed:** `clawdiney-eval` scores retrieval quality (recall@k/MRR/hit-rate) per mode against a regression baseline — see [`BENCHMARKS.md`](BENCHMARKS.md)
 
 > **Migrating from v0.1.x (Docker stack)?** The Neo4j/ChromaDB/Redis containers are no longer used. Just install v0.2.0, keep Ollama running, and run `clawdiney-index` once to rebuild the index into `brain.db`. Your vault files are the source of truth — nothing is lost. Old Docker volumes can be removed with `docker compose -f docker/docker-compose.yml down -v`.
+
+---
+
+## ⚖️ Why Embedded SQLite Instead of a Service Stack
+
+Peers in the AI-agent-memory space (mem0, Zep/Graphiti, Letta/MemGPT) typically run a vector DB + graph DB + cache as separate services. Clawdiney holds vectors (`sqlite-vec`), full-text (FTS5), and the knowledge graph in one `brain.db` file:
+
+| | Clawdiney | Typical peer stack |
+|---|---|---|
+| Infrastructure | 1 file (`brain.db`) | Vector DB + graph DB (e.g. Neo4j) + cache (e.g. Redis) |
+| Setup | `pip install`, point `BRAIN_DB_PATH` | Provision + configure 2-3 services |
+| Deploy | Copy a file | Orchestrate a stack (Docker Compose / k8s) |
+| Backup | Copy a file | Backup each service independently |
+
+This is a deliberate trade-off: embedded SQLite means single-writer-at-a-time semantics and no built-in horizontal scaling — right for a single-user or small-team coding-agent memory layer, not a multi-tenant SaaS backend. See [`BENCHMARKS.md`](BENCHMARKS.md) for retrieval-quality numbers (recall@k/MRR/hit-rate by mode) and reranker latency/precision trade-offs, measured with the built-in eval harness (`clawdiney-eval`).
 
 ---
 
@@ -256,17 +274,18 @@ With MCP configured, the agent has access to **read and write** tools:
 
 #### Read Tools (Discovery)
 
-- `search_brain(query)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components
-- `explore_graph(note_name)` - Find entities related to a note or project — notes, WikiLinks, tags, or (for projects) dependencies/patterns — with relation type and evidence
+- `search_brain(query, vault?, agent_id?)` - Hybrid search (BM25 + vector, RRF-fused, optionally reranked) for architectural patterns, SOPs, and design system components. `agent_id` (optional) also searches that agent's own memory (see `write_memory` below) alongside shared vault content; results append an "Unresolved conflicts" section when a returned note touches a contradicted fact
+- `explore_graph(note_name, vault?, agent_id?)` - Find entities related to a note or project — notes, WikiLinks, tags, or (for projects) dependencies/patterns — with relation type and evidence. Same `agent_id` scoping and conflict surfacing as `search_brain`
 - `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 - `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
 - `get_project_card(name)` - Full project card (Purpose, Stack, Architecture, Interfaces) — the first call when touching an unfamiliar project
-- `how_do_projects_relate(a, b)` - Graph paths between two projects (shared dependencies, datastores, patterns) with evidence
+- `how_do_projects_relate(a, b, vault?, agent_id="*")` - Graph paths between two projects (shared dependencies, datastores, patterns) with evidence. `agent_id="*"` (default) applies no filtering; pass a specific id to additionally restrict to that agent's own relations
 - `health_check()` - Check health of `brain.db`, Ollama, and the optional reranker, plus per-vault document counts
 
 #### Write Tools (Knowledge Capture)
 
 - `write_note(path, content, mode)` - Create or update a note at any vault location
+- `write_memory(fact, source, agent_id="default", vault?)` - Persist a natural-language fact (ideally `"<Subject> <verb> <value>"`, e.g. `"User prefers embedded SQLite over Docker-based stacks"`) as agent-written memory. Resolves the subject against existing entities and writes to a provenance-marked `40_Memory/` note — the only write tool triggered by conversational knowledge rather than an explicit save request
 - `append_to_daily(content)` - Append content to today's daily note (50_Daily/YYYY-MM-DD.md)
 - `add_learning(topic, content, area)` - Save learnings to appropriate folder (SOPs, Architecture, etc.)
 - `delete_note(path)` - Delete a note and remove from index
@@ -281,6 +300,9 @@ With MCP configured, the agent has access to **read and write** tools:
 
 > *"Document today's learnings about the project."*
 > → `append_to_daily("## Learnings\\n- Discovered X about the architecture")`
+
+> *"Remember that I prefer embedded SQLite over Docker-based stacks for this kind of tool."*
+> → `write_memory("User prefers embedded SQLite over Docker-based stacks", source="conversation")`
 
 Full-file reading is intentionally outside the MCP workflow. The agent should use the repository or vault filesystem directly after `search_brain` has identified the relevant note.
 
