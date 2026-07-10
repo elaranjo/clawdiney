@@ -6,6 +6,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .config import Config
+from .constants import SEARCH_N_RESULTS_DEFAULT
 from .logging_config import setup_logging
 from .query_engine import BrainQueryEngine
 
@@ -162,7 +163,9 @@ def _format_conflicts(conflicts):
 
 
 @mcp.tool()
-def search_brain(query: str, vault: str = None, agent_id: str = None) -> str:
+def search_brain(
+    query: str, vault: str = None, agent_id: str = None, n_results: int = None
+) -> str:
     """
     Search Clawdiney for architectural patterns, SOPs, and design system components.
     Use this whenever you need to verify a standard or find existing implementation patterns.
@@ -173,8 +176,21 @@ def search_brain(query: str, vault: str = None, agent_id: str = None) -> str:
         agent_id: Optional namespace scope. Omitted/"default" searches shared
             content only; any other value also includes that agent's own
             memory (see write_memory) alongside shared content.
+        n_results: Optional number of results to retrieve (default 3). 0
+            explicitly skips retrieval and returns without querying storage.
     """
     try:
+        effective_n_results = (
+            SEARCH_N_RESULTS_DEFAULT if n_results is None else n_results
+        )
+        vault_label_for_zero = vault or Config.get_default_vault()
+        if effective_n_results == 0:
+            logger.info("Search query skipped: n_results=0")
+            return (
+                f"0 results requested for '{query}' [vault: {vault_label_for_zero}]: "
+                f"no search performed."
+            )
+
         engine = get_engine(vault=vault)
         logger.info(
             f"Search query: {query[:50]}..."
@@ -182,7 +198,12 @@ def search_brain(query: str, vault: str = None, agent_id: str = None) -> str:
             else f"Search query: {query}"
         )
         vault_label = engine.current_vault
-        rows = engine.retrieve(query, vault_override=vault, agent_id=agent_id)
+        rows = engine.retrieve(
+            query,
+            vault_override=vault,
+            agent_id=agent_id,
+            n_results=effective_n_results,
+        )
         briefing = engine.build_context(rows, expand_graph=True)
         conflicts_section = _format_conflicts(engine.get_conflicts_for_rows(rows))
         return (

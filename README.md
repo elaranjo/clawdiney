@@ -11,7 +11,7 @@
 A hybrid **Vector + Graph** system that transforms your Obsidian vaults into a living knowledge source for AI coding agents.
 
 <p align="center">
-  <img src="assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
+  <img src="https://raw.githubusercontent.com/elaranjo/clawdiney/main/assets/clawdiney-image.jpeg" alt="Clawdiney Banner" width="100%">
 </p>
 
 ---
@@ -230,6 +230,37 @@ Clawdiney runs as a local Python process (stdio transport) — no server to star
 Restart the client session after registering — MCP config is read once at session start.
 
 > Remote/network access (SSE transport) is still available by setting `MCP_TRANSPORT=sse` before launching `clawdiney.mcp_server` directly, but stdio (the default, no config needed) is what both clients above use and is the supported path.
+
+---
+
+## 🔍 Proactive Context Hook (Optional)
+
+`scripts/claude_hook_context.py` is a Claude Code `UserPromptSubmit` hook: it runs `search_brain`-equivalent retrieval before every prompt and injects the results as context automatically, so relevant SOPs/patterns surface even if the agent doesn't think to search for them.
+
+**Install** — add to `~/.claude/settings.json` under `hooks.UserPromptSubmit`:
+
+```json
+{
+  "hooks": [
+    {
+      "type": "command",
+      "command": "/path/to/clawdiney/venv/bin/python3 /path/to/clawdiney/scripts/claude_hook_context.py",
+      "timeout": 10,
+      "statusMessage": "Querying clawdiney brain..."
+    }
+  ]
+}
+```
+
+**Controlling how many sources it injects** (default: 3; 0 disables it entirely):
+
+| Scope | How |
+|---|---|
+| Session | `export CLAWDINEY_HOOK_N_RESULTS=8` before starting Claude Code — applies to every prompt in that shell |
+| Single prompt | Add `@nN` anywhere in the prompt text, e.g. `explain the auth flow @n8` — the marker is stripped before the search runs and only affects that one prompt |
+| Disable | `CLAWDINEY_HOOK_N_RESULTS=0` (session) or `@n0` (one prompt) |
+
+Precedence: inline `@nN` marker > `CLAWDINEY_HOOK_N_RESULTS` > default (3).
 
 ---
 
