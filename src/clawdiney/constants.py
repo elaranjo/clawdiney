@@ -16,6 +16,9 @@ OLLAMA_EMBEDDING_TIMEOUT_SECONDS = 600  # 10 minutes for Ollama embeddings
 
 # Search defaults
 SEARCH_N_RESULTS_DEFAULT = 3  # Default number of search results
+SEARCH_N_RESULTS_AUTO = -1  # Sentinel: adaptive result count (score-based cutoff)
+ADAPTIVE_MAX_RESULTS = 10  # Ceiling of candidates considered in adaptive mode
+ADAPTIVE_SCORE_RATIO = 0.6  # Keep rows scoring >= ratio * top RRF score
 SEARCH_EXPAND_GRAPH_DEFAULT = True  # Whether to expand graph by default
 SEARCH_USE_RERANK_DEFAULT = True  # Whether to use reranking by default
 

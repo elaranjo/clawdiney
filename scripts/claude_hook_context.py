@@ -24,14 +24,18 @@ additional context before the prompt is processed. Any failure (Ollama
 down, empty vault, timeout) must degrade to silent no-op — a broken brain
 must never break a session.
 
-Result count controls (0 to N, 0 disables the proactive search):
-- Session-level: export CLAWDINEY_HOOK_N_RESULTS=<int> before starting
-  Claude Code. Applies to every prompt in that shell session. Invalid
-  (non-integer or negative) values fall back to the default (3).
+Result count controls (0 disables the proactive search):
+- Default: adaptive — the engine fetches up to 10 candidates and keeps only
+  those whose RRF score holds up against the best hit, so narrow prompts
+  inject 1-2 sources and broad prompts many more, with no manual tuning.
+- Session-level: export CLAWDINEY_HOOK_N_RESULTS=<int|auto> before starting
+  Claude Code. An integer pins a fixed count for every prompt; "auto" (or
+  unset/invalid) keeps adaptive mode.
 - Per-prompt: include an inline `@nN` marker anywhere in the prompt text
-  (e.g. "explain the auth flow @n8"). The marker is stripped before the
-  text is used as the search query and only affects that one prompt.
-- Precedence: inline marker > CLAWDINEY_HOOK_N_RESULTS > default (3).
+  (e.g. "explain the auth flow @n8"), or `@nauto` to force adaptive. The
+  marker is stripped before the text is used as the search query and only
+  affects that one prompt.
+- Precedence: inline marker > CLAWDINEY_HOOK_N_RESULTS > adaptive default.
 """
 
 import json
@@ -42,8 +46,8 @@ import sys
 from pathlib import Path
 
 MIN_PROMPT_LENGTH = 12
-DEFAULT_N_RESULTS = 3
-_MARKER_RE = re.compile(r"@n(\d+)\b", re.IGNORECASE)
+AUTO_N_RESULTS = -1  # SEARCH_N_RESULTS_AUTO: engine picks count by score cutoff
+_MARKER_RE = re.compile(r"@n(\d+|auto)\b", re.IGNORECASE)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -68,24 +72,26 @@ def _detect_vault(cwd: Path, vaults: dict) -> str | None:
 
 def _env_n_results() -> int:
     raw = os.environ.get("CLAWDINEY_HOOK_N_RESULTS")
-    if raw is None:
-        return DEFAULT_N_RESULTS
+    if raw is None or raw.strip().lower() == "auto":
+        return AUTO_N_RESULTS
     try:
         value = int(raw)
     except ValueError:
-        return DEFAULT_N_RESULTS
-    return value if value >= 0 else DEFAULT_N_RESULTS
+        return AUTO_N_RESULTS
+    return value if value >= 0 else AUTO_N_RESULTS
 
 
 def _resolve_n_results(prompt: str) -> tuple[int, str]:
-    """Inline `@nN` marker > CLAWDINEY_HOOK_N_RESULTS > default (3).
-    Returns (n_results, prompt_with_marker_stripped)."""
+    """Inline `@nN`/`@nauto` marker > CLAWDINEY_HOOK_N_RESULTS > adaptive.
+    Returns (n_results, prompt_with_marker_stripped); AUTO_N_RESULTS means
+    the engine decides the count via score cutoff."""
     match = _MARKER_RE.search(prompt)
     if not match:
         return _env_n_results(), prompt
     cleaned = _MARKER_RE.sub("", prompt, count=1)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
-    return int(match.group(1)), cleaned
+    value = match.group(1)
+    return (AUTO_N_RESULTS if value.lower() == "auto" else int(value)), cleaned
 
 
 def main() -> None:
@@ -99,7 +105,7 @@ def main() -> None:
         return
 
     n_results, query_text = _resolve_n_results(prompt)
-    if n_results <= 0:
+    if n_results == 0:
         return
 
     cwd = Path(payload.get("cwd") or os.getcwd())
@@ -124,7 +130,7 @@ def main() -> None:
         "use search_brain/explore_graph/get_project_card para aprofundar]\n\n" + result
     )
     requested_note = (
-        f" (n_results={n_results})" if n_results != DEFAULT_N_RESULTS else ""
+        " (adaptive)" if n_results == AUTO_N_RESULTS else f" (n_results={n_results})"
     )
     print(
         json.dumps(

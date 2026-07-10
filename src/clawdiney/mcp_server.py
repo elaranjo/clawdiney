@@ -178,10 +178,12 @@ def search_brain(
             memory (see write_memory) alongside shared content.
         n_results: Optional number of results to retrieve (default 3). 0
             explicitly skips retrieval and returns without querying storage.
-            Raise it for broad/exploratory questions spanning multiple docs
-            or unfamiliar territory (try 6-8); lower it for a narrow, specific
-            lookup where you already know which note holds the answer (1-2);
-            leave it unset for typical single-topic queries.
+            -1 enables adaptive mode: the engine keeps only results whose
+            relevance score holds up against the best hit (1 to 10 results
+            depending on how broad the query is) — prefer this when unsure
+            how much material the vault has on the topic. Or pin it manually:
+            6-8 for broad/exploratory questions, 1-2 for a narrow lookup
+            where you already know which note holds the answer.
     """
     try:
         effective_n_results = (
