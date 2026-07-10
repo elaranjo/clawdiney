@@ -220,7 +220,7 @@ Use the MCP `health_check` tool (or open `brain.db` with any SQLite client) for 
 
 The system integrates with MCP clients. When properly configured, the agent should use these tools:
 
-1. `search_brain(query, vault?, agent_id?, n_results?)` - Search for architectural patterns, SOPs, and design system components. `agent_id` (optional) also includes that agent's own memory (see `write_memory`) alongside shared content; the response appends an "Unresolved conflicts" section when returned notes touch a contradicted fact. `n_results` (optional, default 3) — `0` explicitly skips the search rather than returning a real result set
+1. `search_brain(query, vault?, agent_id?, n_results?)` - Search for architectural patterns, SOPs, and design system components. `agent_id` (optional) also includes that agent's own memory (see `write_memory`) alongside shared content; the response appends an "Unresolved conflicts" section when returned notes touch a contradicted fact. `n_results` (optional, default 3) — raise it (6-8) for broad/exploratory questions spanning multiple docs, lower it (1-2) for a narrow lookup where the target note is already known; `0` explicitly skips the search rather than returning a real result set
 2. `explore_graph(note_name, vault?, agent_id?)` - Find related entities (notes, projects, libraries, patterns) with typed relations and evidence; same `agent_id` scoping and conflict surfacing as `search_brain`
 3. `resolve_note(name)` - Resolve ambiguous note names into canonical vault-relative paths
 4. `get_note_chunks(path)` - Inspect indexed chunk headers for a resolved note
