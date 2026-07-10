@@ -699,7 +699,7 @@ def delete_note(path: str, vault: str = None) -> str:
         return f"Error in delete_note: {str(e)}"
 
 
-if __name__ == "__main__":
+def main() -> None:
     import signal
     import sys
 
@@ -735,3 +735,7 @@ if __name__ == "__main__":
     if mount_path:
         run_kwargs["mount_path"] = mount_path
     mcp.run(**run_kwargs)
+
+
+if __name__ == "__main__":
+    main()

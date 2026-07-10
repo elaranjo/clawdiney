@@ -81,7 +81,30 @@ Optional:
 
 ## 🛠️ Quick Installation
 
-**Clone this repository:**
+### Option A: pip install (recommended for using Clawdiney against your own vault)
+
+```bash
+pip install clawdiney
+# optional: pip install clawdiney[rerank]
+```
+
+Create a `.env` in the directory you'll run commands from (or export the same variables in your shell) — see [`.env.example`](.env.example) for the full list:
+```bash
+VAULTS_DIR=~/clawdiney-vaults
+MCP_DEFAULT_VAULT=general
+BRAIN_DB_PATH=~/.clawdiney/brain.db
+MODEL_NAME=bge-m3:latest
+```
+
+This installs three console scripts: `clawdiney` (vault management — see [Provisioning Project Vaults](#provisioning-project-vaults) below), `clawdiney-index` (index a vault into `brain.db`), and `clawdiney-mcp` (the MCP server entry point, used in [MCP Client Configuration](#-mcp-client-configuration)). Ollama still needs to be running separately with the `bge-m3` model pulled.
+
+```bash
+ollama pull bge-m3
+clawdiney-index
+```
+
+### Option B: clone from source (recommended for contributing or running the bootstrapper)
+
 ```bash
 git clone git@github.com:elaranjo/clawdiney.git
 cd clawdiney
@@ -204,6 +227,8 @@ This scans `~/projetos/` and creates a vault per project with:
 
 Clawdiney runs as a local Python process (stdio transport) — no server to start separately, no container. Your MCP client (Claude Code, OpenCode, etc.) launches it on demand.
 
+The `command`/`args` differ depending on how you installed Clawdiney: a **pip install** exposes `clawdiney-mcp` directly on `PATH`; a **clone + bootstrapper** setup runs the module from its venv instead. Pick the block matching Option A or B above.
+
 **Claude Code** (`~/.claude.json`, project scope):
 ```json
 {
@@ -211,8 +236,7 @@ Clawdiney runs as a local Python process (stdio transport) — no server to star
     "/home/YOUR_PROJECTS_DIR": {
       "mcpServers": {
         "clawdiney": {
-          "command": "/path/to/clawdiney/venv/bin/python3",
-          "args": ["-m", "clawdiney.mcp_server"],
+          "command": "clawdiney-mcp",
           "env": {
             "VAULTS_DIR": "/path/to/your/vaults",
             "MCP_DEFAULT_VAULT": "general",
@@ -225,6 +249,7 @@ Clawdiney runs as a local Python process (stdio transport) — no server to star
   }
 }
 ```
+Cloned from source instead? Use `"command": "/path/to/clawdiney/venv/bin/python3"` with `"args": ["-m", "clawdiney.mcp_server"]`.
 
 **OpenCode** (`opencode.json`):
 ```json
@@ -232,7 +257,7 @@ Clawdiney runs as a local Python process (stdio transport) — no server to star
   "mcp": {
     "clawdiney": {
       "type": "local",
-      "command": ["/path/to/clawdiney/venv/bin/python3", "-m", "clawdiney.mcp_server"],
+      "command": ["clawdiney-mcp"],
       "enabled": true,
       "environment": {
         "VAULTS_DIR": "/path/to/your/vaults",
@@ -244,6 +269,7 @@ Clawdiney runs as a local Python process (stdio transport) — no server to star
   }
 }
 ```
+Cloned from source instead? Use `"command": ["/path/to/clawdiney/venv/bin/python3", "-m", "clawdiney.mcp_server"]`.
 
 Restart the client session after registering — MCP config is read once at session start.
 
