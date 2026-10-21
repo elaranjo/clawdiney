@@ -5,6 +5,7 @@ This module defines the protocol for embedding providers and provides
 implementations for Ollama, OpenAI, and other embedding services.
 """
 
+import os
 from typing import Protocol, runtime_checkable
 
 from tenacity import (
@@ -105,7 +106,16 @@ class OpenAIEmbeddingProvider:
         Args:
             model_name: Name of the OpenAI embedding model
         """
-        from openai import OpenAI
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError(
+                "OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai"
+            )
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install the OpenAI extra: pip install 'clawdiney[openai]'"
+            ) from exc
 
         self.client = OpenAI()
         self.model_name = model_name
@@ -117,8 +127,13 @@ class OpenAIEmbeddingProvider:
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts in batch."""
+        if not texts:
+            return []
         response = self.client.embeddings.create(model=self.model_name, input=texts)
-        return [item.embedding for item in response.data]
+        return [
+            item.embedding
+            for item in sorted(response.data, key=lambda item: item.index)
+        ]
 
 
 def get_embedding_provider(provider: str, **kwargs) -> EmbeddingProvider:
@@ -151,6 +166,6 @@ def default_provider() -> EmbeddingProvider:
     """Provider selected by Config.EMBEDDING_PROVIDER (default: ollama)."""
     from .config import Config
 
-    if Config.EMBEDDING_PROVIDER == "ollama":
-        return get_embedding_provider("ollama", model_name=Config.MODEL_NAME)
-    return get_embedding_provider(Config.EMBEDDING_PROVIDER)
+    return get_embedding_provider(
+        Config.EMBEDDING_PROVIDER, model_name=Config.MODEL_NAME
+    )

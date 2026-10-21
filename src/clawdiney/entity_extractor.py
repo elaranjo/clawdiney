@@ -291,6 +291,8 @@ def extract_semantic(
 ) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
     """LLM extraction over a project card. Invalid items dropped with warning."""
     if client is None:
+        if Config.EMBEDDING_PROVIDER != "ollama":
+            raise RuntimeError("Semantic LLM enrichment requires Ollama")
         import ollama
 
         client = ollama.Client()
@@ -456,6 +458,10 @@ def run_extraction(
 
     # --- Layer 2 ---
     if card_content is None:
+        return summary
+
+    if Config.EMBEDDING_PROVIDER != "ollama" and llm_client is None:
+        summary["layer2"] = "unavailable (requires Ollama)"
         return summary
 
     card_hash = hashlib.sha256(card_content.encode("utf-8")).hexdigest()

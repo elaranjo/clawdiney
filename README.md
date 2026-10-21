@@ -58,7 +58,7 @@ Before starting, make sure you have installed:
 
 | Software | Minimum Version | Link |
 |----------|-----------------|------|
-| **Ollama** | 0.3.x+ | [ollama.com](https://ollama.com/) (embedding model `bge-m3`) |
+| **Embedding provider** | Ollama 0.3.x+ or OpenAI API | [Ollama](https://ollama.com/) (`bge-m3`) or [OpenAI embeddings](https://developers.openai.com/api/docs/guides/embeddings) |
 | **Python** | 3.10+ | Usually already installed on Unix systems. If not: `apt install python3` or `brew install python@3.12` |
 
 Optional:
@@ -66,6 +66,7 @@ Optional:
 | Extra | Install | What it adds |
 |-------|---------|--------------|
 | **Reranker** | `pip install clawdiney[rerank]` | Cross-encoder reranking (`BAAI/bge-reranker-v2-m3`, ~2GB RAM). Without it, searches use RRF ordering — still fully functional. |
+| **OpenAI embeddings** | `pip install 'clawdiney[openai]'` | Vector indexing and search without an Ollama service. Requires your own OpenAI API key and incurs API charges. |
 
 **Configuration:** `BRAIN_DB_PATH` env var sets the database location (default: `~/.clawdiney/brain.db`). For the project knowledge graph: `CARD_LLM_MODEL` (Ollama model for project card Purpose/Architecture sections, default `qwen3`) and `ENTITY_RESOLUTION_THRESHOLD` (similarity cutoff for merging duplicate entities, default `0.85`).
 
@@ -102,6 +103,28 @@ This installs three console scripts: `clawdiney` (vault management — see [Prov
 ollama pull bge-m3
 clawdiney-index
 ```
+
+### OpenAI embeddings without an Ollama service
+
+Install the optional SDK and configure a **new database path** when switching from an existing Ollama index:
+
+```bash
+python3 -m venv ~/.clawdiney/openai-venv
+~/.clawdiney/openai-venv/bin/python -m pip install 'clawdiney[openai]'
+export VAULT_PATH=/absolute/path/to/your/ObsidianVault
+export BRAIN_DB_PATH="$HOME/.clawdiney/openai-brain.db"
+export EMBEDDING_PROVIDER=openai
+export MODEL_NAME=text-embedding-3-small
+export EMBEDDING_DIMENSION=1536
+export ENABLE_RERANK=false
+# Set OPENAI_API_KEY in this shell using your preferred secret manager.
+~/.clawdiney/openai-venv/bin/clawdiney-index
+~/.clawdiney/openai-venv/bin/python -m clawdiney.query_engine "a term in your vault"
+```
+
+`text-embedding-3-small` returns 1536 dimensions by default. The vault note text sent for indexing, and search queries sent for retrieval, go to the OpenAI API. Choose and inspect the vault before indexing; keep secrets out of notes and MCP config files. Project cards still include deterministic stack and interface information, but their generated Purpose/Architecture sections and semantic entity extraction are unavailable without Ollama. The core package still installs the Ollama Python client for its default local mode; no Ollama service or model is required for the OpenAI mode.
+
+The MCP client must launch `clawdiney-mcp` with the same non-secret environment values and `OPENAI_API_KEY` available in its process environment. Use the absolute executable path from the venv above. Restart the agent after changing its environment or MCP configuration.
 
 ### Option B: clone from source (recommended for contributing or running the bootstrapper)
 
@@ -507,18 +530,18 @@ The agent has immediate access to new/modified notes after sync completes.
 
 ## 🐛 Troubleshooting
 
-Start with the MCP `health_check()` tool — it reports `brain.db` status (path, document/chunk/entity/relation counts), Ollama connectivity, and whether the reranker loaded, plus per-vault document counts.
+Start with the MCP `health_check()` tool — it reports `brain.db` status (path, document/chunk/entity/relation counts), the selected embedding provider, and whether the reranker loaded, plus per-vault document counts. In OpenAI mode it sends a short synthetic health-check string to verify API access and vector dimension.
 
 ### MCP client doesn't see the server
 - Check the client config points `command`/`args` at `<venv>/bin/python3 -m clawdiney.mcp_server` and restart the client session (MCP config is only read at session start).
-- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server` (should print Ollama model validation, then wait on stdio — Ctrl+C to stop).
+- Test the server manually: `./venv/bin/python3 -m clawdiney.mcp_server` (validates the selected provider, then waits on stdio — Ctrl+C to stop).
 
 ### `search_brain` returns nothing
 - Run `health_check()` — if `documents: 0`, the vault hasn't been indexed yet: `./venv/bin/python3 -m clawdiney.indexer`.
 - Check `VAULTS_DIR` / `VAULT_PATH` env vars match where your `.md` files actually live.
 
 ### "Re-index required" / `SchemaMismatchError`
-- `brain.db` was created with a different embedding model or dimension than your current config. Delete the file (`rm ~/.clawdiney/brain.db`, or your `BRAIN_DB_PATH`) and re-run the indexer — it rebuilds from your vault files, nothing else is lost.
+- `brain.db` was created with a different embedding model or dimension than your current config. Back up that database first, then set a new `BRAIN_DB_PATH` and run `clawdiney-index` to build a fresh index. Do not delete the old database to make the error disappear.
 
 ### Reranker doesn't activate
 - Check it's installed: `pip install clawdiney[rerank]` (adds `sentence-transformers`, ~2GB with model weights).

@@ -68,8 +68,9 @@ class TestSchema:
     def test_dimension_mismatch_raises(self, tmp_path):
         db = tmp_path / "brain.db"
         BrainStorage(db_path=db, dimension=DIM).close()
-        with pytest.raises(SchemaMismatchError, match="Re-index required"):
+        with pytest.raises(SchemaMismatchError, match="Re-index required: back up"):
             BrainStorage(db_path=db, dimension=DIM + 1)
+        assert db.is_file()
 
     def test_per_thread_connections(self, storage):
         conns = {}

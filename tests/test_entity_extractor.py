@@ -188,6 +188,20 @@ class TestLayer2Extraction:
 
 
 class TestRunExtraction:
+    def test_openai_mode_keeps_deterministic_graph_and_marks_llm_unavailable(
+        self, py_project, storage, monkeypatch
+    ):
+        monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_PROVIDER", "openai")
+        summary = run_extraction(
+            "proj-py",
+            py_project,
+            storage,
+            provider=FakeProvider(),
+            card_content="# proj-py",
+        )
+        assert summary["layer1"] >= 2
+        assert summary["layer2"] == "unavailable (requires Ollama)"
+
     def test_layer1_populates_graph(self, py_project, storage):
         summary = run_extraction(
             "proj-py", py_project, storage, provider=FakeProvider()

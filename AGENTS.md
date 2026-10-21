@@ -10,7 +10,7 @@ Clawdiney is a hybrid Vector + Graph system that transforms an Obsidian Vault in
 
 The system is fully embedded (v0.2.0) — a single SQLite database (`brain.db`) holds everything:
 
-1. **sqlite-vec** - Vector KNN search (embeddings via Ollama `bge-m3`)
+1. **sqlite-vec** - Vector KNN search (Ollama `bge-m3` by default, or OpenAI embeddings)
 2. **FTS5** - BM25 full-text search (exact terms, acronyms, identifiers)
 3. **Graph tables** (`entities`, `relations`) - Note relationships via WikiLinks and shared tags
 4. **MCP Server** - Provides integration with Codex via Model Context Protocol
@@ -18,13 +18,13 @@ The system is fully embedded (v0.2.0) — a single SQLite database (`brain.db`) 
 Data flow:
 Obsidian Vault → `src/clawdiney/indexer.py` → `brain.db` (via `storage.py`) → `src/clawdiney/mcp_server.py` → Codex
 
-**No Docker services required.** Only Ollama must be running (embeddings). The database lives at `BRAIN_DB_PATH` (default `~/.clawdiney/brain.db`).
+**No Docker services required.** The default Ollama mode requires Ollama; `EMBEDDING_PROVIDER=openai` uses the OpenAI API instead. The database lives at `BRAIN_DB_PATH` (default `~/.clawdiney/brain.db`).
 
 ## Common Development Commands
 
 ### Running the System
 
-No infrastructure to start — storage is an embedded SQLite file. Ensure Ollama is running with the `bge-m3` model pulled.
+No infrastructure to start — storage is an embedded SQLite file. For the default mode, ensure Ollama is running with `bge-m3` pulled. The README documents the OpenAI mode without an Ollama service.
 
 Index/re-index the Obsidian vault:
 ```bash
@@ -101,7 +101,7 @@ The system integrates via the Model Context Protocol (MCP). When properly config
 4. `get_note_chunks(path)` - List chunk headers for a note (structured preview)
 5. `get_project_card(name)` - Full project card (Purpose, Stack, Architecture, Interfaces)
 6. `how_do_projects_relate(a, b)` - Graph paths between two projects
-7. `health_check()` - Check health status of `brain.db` and Ollama
+7. `health_check()` - Check health status of `brain.db` and the selected embedding provider
 
 ### Write Tools (Knowledge Capture)
 

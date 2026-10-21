@@ -115,8 +115,8 @@ class BrainQueryEngine:
                 "Failed to load vault config from %s: %s", self.vault_root, exc
             )
 
-        self.storage = storage or get_storage()
         self.provider = provider or default_provider()
+        self.storage = storage or get_storage()
         self.query_preprocessor = QueryPreprocessor(
             expand_abbreviations=True, remove_stop_words=False
         )

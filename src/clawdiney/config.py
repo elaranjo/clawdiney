@@ -157,9 +157,16 @@ class Config:
         return first or "default"
 
     # Model / embeddings
-    MODEL_NAME = os.getenv("MODEL_NAME", "bge-m3")
-    EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
-    EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
+    EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama").strip().lower()
+    MODEL_NAME = os.getenv(
+        "MODEL_NAME",
+        "text-embedding-3-small" if EMBEDDING_PROVIDER == "openai" else "bge-m3",
+    )
+    EMBEDDING_DIMENSION = int(
+        os.getenv(
+            "EMBEDDING_DIMENSION", "1536" if EMBEDDING_PROVIDER == "openai" else "1024"
+        )
+    )
     ENABLE_RERANK = _get_bool("ENABLE_RERANK", True)
     RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 
@@ -185,10 +192,25 @@ class Config:
 
             client = ollama.Client()
             available_models = client.list()
-            model_names = [m["name"] for m in available_models.get("models", [])]
+            model_names = []
+            for model in available_models.get("models", []):
+                if isinstance(model, dict):
+                    name = model.get("name") or model.get("model")
+                else:
+                    name = getattr(model, "name", None) or getattr(model, "model", None)
+                if name:
+                    model_names.append(str(name))
 
             # Check embedding model
-            if cls.MODEL_NAME not in model_names:
+            # Ollama's Python client returns Pydantic Model objects, and the
+            # server names the default tag explicitly as ':latest'.
+            requested_model = cls.MODEL_NAME
+            if not any(
+                name == requested_model
+                or name == f"{requested_model}:latest"
+                or f"{name}:latest" == requested_model
+                for name in model_names
+            ):
                 warnings.append(
                     f"Embedding model '{cls.MODEL_NAME}' not found in Ollama. "
                     f"Run: ollama pull {cls.MODEL_NAME}"
