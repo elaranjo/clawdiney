@@ -454,6 +454,9 @@ class ProjectIndexer:
 
     def _generate_llm_sections(self, project: ProjectInfo) -> dict[str, str] | None:
         """Purpose/Architecture via Ollama. None on any failure (graceful)."""
+        if Config.EMBEDDING_PROVIDER != "ollama":
+            logger.info("LLM project-card enrichment unavailable without Ollama")
+            return None
         readme = project.path / "README.md"
         readme_head = ""
         if readme.is_file():
@@ -517,12 +520,15 @@ class ProjectIndexer:
         # Purpose / Architecture (LLM-generated or pending)
         llm_sections = llm_sections or {}
         sections.append("## Purpose\n")
-        sections.append(llm_sections.get("Purpose") or "_pending (Ollama unavailable)_")
+        missing_llm = (
+            "_unavailable (LLM enrichment requires Ollama)_"
+            if Config.EMBEDDING_PROVIDER != "ollama"
+            else "_pending (Ollama unavailable)_"
+        )
+        sections.append(llm_sections.get("Purpose") or missing_llm)
         sections.append("")
         sections.append("## Architecture\n")
-        sections.append(
-            llm_sections.get("Architecture") or "_pending (Ollama unavailable)_"
-        )
+        sections.append(llm_sections.get("Architecture") or missing_llm)
         sections.append("")
 
         # Stack

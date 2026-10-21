@@ -350,6 +350,32 @@ class TestHealthCheck:
         assert "default" in result
         assert "projects" in result
 
+    def test_openai_health_does_not_contact_ollama(
+        self, mock_get_all_vaults, monkeypatch
+    ):
+        from clawdiney.mcp_server import health_check
+
+        mock_get_all_vaults.return_value = {}
+        monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_PROVIDER", "openai")
+        monkeypatch.setattr(
+            "clawdiney.config.Config.MODEL_NAME", "text-embedding-3-small"
+        )
+        monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_DIMENSION", 3)
+        fake_provider = MagicMock()
+        fake_provider.embed.return_value = [0.1, 0.2, 0.3]
+        with patch(
+            "clawdiney.embedding_providers.default_provider", return_value=fake_provider
+        ):
+            with patch(
+                "ollama.Client", side_effect=AssertionError("Ollama was contacted")
+            ):
+                result = health_check()
+        assert (
+            "Embeddings (openai, text-embedding-3-small): OK (3 dimensions)" in result
+        )
+        assert "LLM project-card and semantic enrichment: unavailable" in result
+        assert "Ollama: FAILED" not in result
+
 
 class TestProjectGraphTools:
     @pytest.fixture()

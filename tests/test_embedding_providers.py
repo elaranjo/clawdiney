@@ -1,11 +1,14 @@
 """Tests for embedding providers (mocked ollama client)."""
 
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from clawdiney.embedding_providers import (
     OllamaEmbeddingProvider,
+    OpenAIEmbeddingProvider,
     default_provider,
     get_embedding_provider,
 )
@@ -59,3 +62,31 @@ class TestFactory:
             monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_PROVIDER", "ollama")
             prov = default_provider()
             assert isinstance(prov, OllamaEmbeddingProvider)
+
+    def test_default_provider_uses_configured_openai_model(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        client = MagicMock()
+        monkeypatch.setitem(
+            sys.modules, "openai", SimpleNamespace(OpenAI=lambda: client)
+        )
+        monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_PROVIDER", "openai")
+        monkeypatch.setattr(
+            "clawdiney.config.Config.MODEL_NAME", "text-embedding-3-large"
+        )
+
+        provider = default_provider()
+        assert isinstance(provider, OpenAIEmbeddingProvider)
+        client.embeddings.create.return_value.data = [
+            SimpleNamespace(index=1, embedding=[2.0]),
+            SimpleNamespace(index=0, embedding=[1.0]),
+        ]
+        assert provider.embed_batch(["first", "second"]) == [[1.0], [2.0]]
+        client.embeddings.create.assert_called_once_with(
+            model="text-embedding-3-large", input=["first", "second"]
+        )
+        assert provider.embed_batch([]) == []
+
+    def test_openai_requires_key(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            OpenAIEmbeddingProvider()

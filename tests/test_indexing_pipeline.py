@@ -1,5 +1,7 @@
 """End-to-end indexing pipeline tests: vault fixture -> brain.db (fake embedder)."""
 
+import sys
+
 import pytest
 
 from clawdiney.incremental_indexer import IncrementalIndexer, incremental_sync
@@ -7,6 +9,19 @@ from clawdiney.indexer import extract_wikilinks, index_vault
 from clawdiney.storage import BrainStorage
 
 DIM = 4
+
+
+def test_console_indexer_returns_success_status(monkeypatch):
+    from clawdiney import indexer
+
+    monkeypatch.setattr(sys, "argv", ["clawdiney-index"])
+    monkeypatch.setattr("clawdiney.config.Config._is_multi_vault", lambda: False)
+    monkeypatch.setattr(
+        indexer,
+        "_index_vault_inner",
+        lambda: {"processed_files": 1, "total_files": 1, "indexed_chunks": 1},
+    )
+    assert indexer.main() is None
 
 
 class FakeProvider:

@@ -316,8 +316,8 @@ def get_note_chunks(filename: str, vault: str = None) -> str:
 @mcp.tool()
 def health_check() -> str:
     """
-    Check health status of the embedded store (brain.db), Ollama, and the
-    optional cross-encoder reranker. Also shows status per configured vault.
+    Check the embedded store, selected embedding provider, optional reranker,
+    and configured vaults.
     Use this to diagnose issues.
     """
     results = []
@@ -340,17 +340,36 @@ def health_check() -> str:
         results.append(f"brain.db: FAILED - {e}")
         all_healthy = False
 
-    # Check Ollama
+    # Check only the configured provider. A tiny OpenAI probe verifies both
+    # credentials and the dimension used by the local vector schema.
     try:
-        import ollama
+        if Config.EMBEDDING_PROVIDER == "ollama":
+            import ollama
 
-        client = ollama.Client()
-        models = client.list()
-        model_count = len(models.get("models", []))
-        results.append(f"Ollama: OK ({model_count} models)")
+            models = ollama.Client().list()
+            model_count = len(models.get("models", []))
+            results.append(f"Ollama: OK ({model_count} models)")
+        else:
+            from .embedding_providers import default_provider
+
+            dimension = len(default_provider().embed("Clawdiney health check"))
+            if dimension != Config.EMBEDDING_DIMENSION:
+                raise ValueError(
+                    f"model returned {dimension} dimensions; configured "
+                    f"EMBEDDING_DIMENSION={Config.EMBEDDING_DIMENSION}"
+                )
+            results.append(
+                f"Embeddings ({Config.EMBEDDING_PROVIDER}, {Config.MODEL_NAME}): "
+                f"OK ({dimension} dimensions)"
+            )
     except Exception as e:
-        results.append(f"Ollama: FAILED - {e}")
+        results.append(f"Embeddings ({Config.EMBEDDING_PROVIDER}): FAILED - {e}")
         all_healthy = False
+
+    if Config.EMBEDDING_PROVIDER != "ollama":
+        results.append(
+            "LLM project-card and semantic enrichment: unavailable (requires Ollama)"
+        )
 
     # Check reranker (optional extra; absence is not unhealthy)
     try:
@@ -707,14 +726,22 @@ def main() -> None:
 
     setup_logging()
 
-    # Validate Ollama models on startup
-    logger.info("Validating Ollama models...")
-    ollama_warnings = Config.validate_ollama_models()
-    if ollama_warnings:
-        for warning in ollama_warnings:
-            logger.warning(warning)
+    # Ollama is only needed when selected as the embedding provider.
+    if Config.EMBEDDING_PROVIDER == "ollama":
+        logger.info("Validating Ollama models...")
+        ollama_warnings = Config.validate_ollama_models()
+        if ollama_warnings:
+            for warning in ollama_warnings:
+                logger.warning(warning)
+        else:
+            logger.info("Ollama models validated successfully")
     else:
-        logger.info("Ollama models validated successfully")
+        from .embedding_providers import default_provider
+
+        default_provider()  # fail clearly if the SDK or API key is missing
+        logger.info(
+            "Embedding provider: %s (%s)", Config.EMBEDDING_PROVIDER, Config.MODEL_NAME
+        )
 
     def cleanup(signum=None, frame=None):
         """Clean up resources on shutdown."""

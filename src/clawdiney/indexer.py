@@ -143,8 +143,10 @@ def _index_vault_inner(
     provider: EmbeddingProvider | None = None,
 ) -> dict[str, Any]:
     vault_root = Path(vault_root or Config.VAULT_PATH).expanduser().resolve()
-    storage = storage or get_storage()
+    if not vault_root.is_dir():
+        raise FileNotFoundError(f"Vault directory does not exist: {vault_root}")
     provider = provider or default_provider()
+    storage = storage or get_storage()
 
     total_files = 0
     processed_files = 0
@@ -223,7 +225,7 @@ def index_all_vaults(
     return results
 
 
-def main() -> dict[str, Any] | dict[str, dict[str, Any]]:
+def main() -> None:
     setup_logging()
     parser = argparse.ArgumentParser(
         description="Index Obsidian vault(s) into the embedded brain.db"
@@ -249,7 +251,7 @@ def main() -> dict[str, Any] | dict[str, dict[str, Any]]:
         summaries = index_all_vaults()
         total_all = sum(s["indexed_chunks"] for s in summaries.values())
         logger.info(f"All vaults indexed: {total_all} total chunks indexed")
-        return summaries
+        return
     else:
         logger.info(f"Starting indexing of files from {Config.VAULT_PATH}")
         summary = _index_vault_inner()
@@ -257,7 +259,6 @@ def main() -> dict[str, Any] | dict[str, dict[str, Any]]:
             f"Indexing complete: {summary['processed_files']}/{summary['total_files']} files processed, "
             f"{summary['indexed_chunks']} chunks indexed"
         )
-    return summary
 
 
 if __name__ == "__main__":

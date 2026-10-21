@@ -344,7 +344,8 @@ class BrainStorage:
             raise SchemaMismatchError(
                 f"brain.db was indexed with model='{stored_model}' dim={stored_dim}, "
                 f"but config requests model='{Config.MODEL_NAME}' dim={expected_dim}. "
-                f"Re-index required: delete {self.db_path} and run clawdiney-index."
+                f"Re-index required: back up {self.db_path}, then use a new "
+                "BRAIN_DB_PATH and run clawdiney-index."
             )
 
     @staticmethod

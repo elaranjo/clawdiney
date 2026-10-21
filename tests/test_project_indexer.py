@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -259,6 +260,14 @@ class TestCardEnrichment:
         content = path.read_text(encoding="utf-8")
         assert "_pending (Ollama unavailable)_" in content
         assert "clawdiney_digest" not in content  # digest withheld → retry next run
+
+    def test_openai_mode_marks_llm_sections_unavailable(self, tmp_path, monkeypatch):
+        indexer, info = self._make_project(tmp_path)
+        monkeypatch.setattr("clawdiney.config.Config.EMBEDDING_PROVIDER", "openai")
+        with patch("ollama.Client", side_effect=AssertionError("Ollama was contacted")):
+            assert indexer._generate_llm_sections(info) is None
+            content = indexer.generate_markdown(info)
+        assert "_unavailable (LLM enrichment requires Ollama)_" in content
 
     def test_llm_skipped_when_digest_unchanged(self, tmp_path, monkeypatch):
         from unittest.mock import MagicMock
